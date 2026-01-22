@@ -4,13 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["compute"]
-compute = ["env_logger", "pollster", "wgpu"]
+accelerated = ["env_logger", "pollster", "wgpu"]
+software = ["glazer/software"]
 
 [dependencies]
-glazer = { path = "../blaze/crates/glazer", default-features = false, features = [
-	"software",
-] }
+glazer = { path = "../blaze/crates/glazer", default-features = false }
 rast = { path = "../blaze/crates/rast" }
 rug = { version = "1.28.1", default-features = false, features = [
 	"float",

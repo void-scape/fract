@@ -2,9 +2,9 @@
 #![allow(internal_features)]
 #![feature(core_intrinsics)]
 
-#[cfg(feature = "compute")]
-pub mod compute;
-// #[cfg(not(feature = "compute"))]
+#[cfg(feature = "accelerated")]
+pub mod accelerated;
+#[cfg(not(feature = "accelerated"))]
 pub mod software;
 
 pub const WIDTH: usize = 1600;

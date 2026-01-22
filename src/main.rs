@@ -28,8 +28,8 @@ struct Memory {
     cursor_y: f64,
     cx: Float,
     cy: Float,
-    #[cfg(feature = "compute")]
-    compute_pipeline: Option<fract::compute::Pipeline>,
+    #[cfg(feature = "accelerated")]
+    pipeline: Option<fract::accelerated::Pipeline>,
 }
 
 impl Default for Memory {
@@ -41,8 +41,8 @@ impl Default for Memory {
             cursor_y: 0.0,
             cx: Float::with_val(PRECISION, 0.0),
             cy: Float::with_val(PRECISION, 0.0),
-            #[cfg(feature = "compute")]
-            compute_pipeline: None,
+            #[cfg(feature = "accelerated")]
+            pipeline: None,
         }
     }
 }
@@ -127,6 +127,7 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
 fn update_and_render(
     glazer::PlatformUpdate {
         memory,
+        #[cfg(not(feature = "accelerated"))]
         frame_buffer,
         width,
         height,
@@ -151,28 +152,28 @@ fn update_and_render(
     ));
     window.set_resizable(false);
 
+    #[cfg(feature = "accelerated")]
+    let max_iteration = fract::accelerated::ITERATIONS;
+    #[cfg(not(feature = "accelerated"))]
     let current_zoom_magnitude = -memory.zoom.to_f64().log10();
-    #[cfg(feature = "compute")]
-    let max_iteration = (1000.0 + 500.0 * current_zoom_magnitude.max(0.0)) as usize;
-    #[cfg(not(feature = "compute"))]
+    #[cfg(not(feature = "accelerated"))]
     let max_iteration = (100.0 + 50.0 * current_zoom_magnitude.max(0.0)) as usize;
 
-    #[cfg(feature = "compute")]
+    #[cfg(feature = "accelerated")]
     let pipeline = memory
-        .compute_pipeline
-        .get_or_insert_with(fract::compute::create_pipeline);
+        .pipeline
+        .get_or_insert_with(|| fract::accelerated::create_pipeline(window));
 
-    #[cfg(feature = "compute")]
-    fract::compute::compute_mandelbrot(
+    #[cfg(feature = "accelerated")]
+    fract::accelerated::compute_mandelbrot(
         pipeline,
-        frame_buffer,
         max_iteration,
         &memory.zoom,
         &memory.cx,
         &memory.cy,
     );
 
-    #[cfg(not(feature = "compute"))]
+    #[cfg(not(feature = "accelerated"))]
     fract::software::compute_mandelbrot(
         frame_buffer,
         max_iteration,
