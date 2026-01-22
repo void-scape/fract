@@ -1,10 +1,6 @@
 use crate::{HEIGHT, MANDELBROT_XRANGE, MANDELBROT_YRANGE, PRECISION, WIDTH};
 use rast::tint::{Color, Srgb};
-use rug::{
-    Assign, Float,
-    float::{self, FreeCache},
-    ops::CompleteRound,
-};
+use rug::{Assign, Float, ops::CompleteRound};
 
 // Implementation derived from:
 // - https://en.wikipedia.org/wiki/Mandelbrot_set#Computer_drawings.
@@ -34,7 +30,6 @@ fn mandelbrot_perturbation(
     x: &Float,
     y: &Float,
 ) {
-    let zoom = zoom.to_f64();
     let cx = x;
     let cy = y;
 
@@ -42,7 +37,7 @@ fn mandelbrot_perturbation(
     let h = HEIGHT as f64;
 
     let scanline_width = WIDTH;
-    let scanline_height = HEIGHT / 360;
+    let scanline_height = HEIGHT / 80;
     let scanline_len = scanline_width * scanline_height;
     assert!(frame_buffer.len().is_multiple_of(scanline_len));
 
@@ -69,7 +64,11 @@ fn mandelbrot_perturbation(
         x.assign(&x2 - &y2);
         x += x0;
     }
-    float::free_cache(FreeCache::All);
+
+    let xstep = (Float::with_val(PRECISION, MANDELBROT_XRANGE) * zoom / w).to_f64();
+    let ystep = (Float::with_val(PRECISION, MANDELBROT_YRANGE) * zoom / h).to_f64();
+    let sdx = (Float::with_val(PRECISION, -2.00) * zoom).to_f64();
+    let sdy = (Float::with_val(PRECISION, -1.12) * zoom).to_f64();
 
     // NOTE: Threading scanlines can be around 4-5x faster.
     //
@@ -86,10 +85,11 @@ fn mandelbrot_perturbation(
             let yoffset = (i * scanline_height) as f64;
             s.spawn(move || {
                 for py in 0..scanline_height {
-                    let dy0 = ((yoffset + py as f64) / h * MANDELBROT_YRANGE - 1.12) * zoom;
+                    let abs_py = yoffset + py as f64;
+                    let dy0 = sdy + abs_py * ystep;
 
                     for px in 0..scanline_width {
-                        let dx0 = ((px as f64) / w * MANDELBROT_XRANGE - 2.00) * zoom;
+                        let dx0 = sdx + (px as f64) * xstep;
 
                         // Compute the delta of (x0, y0) with respect to the
                         // reference orbit.

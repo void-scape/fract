@@ -1,10 +1,10 @@
 use fract::PRECISION;
 use glazer::winit::{
-    event::{DeviceEvent, KeyEvent, MouseScrollDelta, WindowEvent},
+    event::{DeviceEvent, ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
     keyboard::{KeyCode, PhysicalKey},
 };
 use rug::{
-    Assign, Float,
+    Float,
     float::Round,
     ops::{AddAssignRound, SubAssignRound},
 };
@@ -63,6 +63,33 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
             memory.cursor_x = position.x;
             memory.cursor_y = position.y;
         }
+        glazer::Input::Window(WindowEvent::MouseInput {
+            state: ElementState::Pressed,
+            button: MouseButton::Left,
+            ..
+        }) => {
+            let zoom_delta = Float::with_val(PRECISION, &memory.zoom * 0.5);
+
+            let mouse_base_x =
+                (memory.cursor_x / fract::WIDTH as f64) * fract::MANDELBROT_XRANGE - 2.00;
+            let mouse_base_y =
+                (memory.cursor_y / fract::HEIGHT as f64) * fract::MANDELBROT_YRANGE - 1.12;
+
+            memory.zoom.sub_assign_round(&zoom_delta, Round::Nearest);
+
+            let mouse_base_x = Float::with_val(PRECISION, mouse_base_x);
+            let mouse_base_y = Float::with_val(PRECISION, mouse_base_y);
+            memory
+                .cx
+                .add_assign_round(&mouse_base_x * &zoom_delta, Round::Nearest);
+            memory
+                .cy
+                .add_assign_round(&mouse_base_y * &zoom_delta, Round::Nearest);
+
+            println!("x: {}", memory.cx.to_string_radix(10, Some(50)));
+            println!("y: {}", memory.cy.to_string_radix(10, Some(50)));
+            println!("z: {}", memory.zoom.to_string_radix(10, Some(50)));
+        }
         glazer::Input::Device(DeviceEvent::MouseWheel { delta }) => match delta {
             // Thank you Gemini!
             MouseScrollDelta::PixelDelta(delta) => {
@@ -78,10 +105,6 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
 
                 memory.zoom.sub_assign_round(&zoom_delta, Round::Nearest);
 
-                if memory.zoom <= 0.0 {
-                    memory.zoom.assign(1e-15);
-                }
-
                 let mouse_base_x = Float::with_val(PRECISION, mouse_base_x);
                 let mouse_base_y = Float::with_val(PRECISION, mouse_base_y);
                 memory
@@ -90,6 +113,10 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
                 memory
                     .cy
                     .add_assign_round(&mouse_base_y * &zoom_delta, Round::Nearest);
+
+                println!("x: {}", memory.cx.to_string_radix(10, Some(50)));
+                println!("y: {}", memory.cy.to_string_radix(10, Some(50)));
+                println!("z: {}", memory.zoom.to_string_radix(10, Some(50)));
             }
             _ => unimplemented!(),
         },
