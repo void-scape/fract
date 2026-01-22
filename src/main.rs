@@ -134,7 +134,7 @@ fn update_and_render(
     );
 
     #[cfg(not(feature = "compute"))]
-    fract::compute_mandelbrot(
+    fract::software::compute_mandelbrot(
         frame_buffer,
         max_iteration,
         memory.zoom,
