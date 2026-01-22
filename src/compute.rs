@@ -1,4 +1,5 @@
 use rast::tint::Srgb;
+use rug::Float;
 
 pub struct Pipeline {
     device: wgpu::Device,
@@ -157,17 +158,17 @@ pub fn compute_mandelbrot(
     pipeline: &mut Pipeline,
     frame_buffer: &mut [Srgb],
     max_iteration: usize,
-    zoom: f64,
-    x: f64,
-    y: f64,
+    zoom: &Float,
+    x: &Float,
+    y: &Float,
 ) {
     let args = MandelbrotUniform {
         width: crate::WIDTH as u32,
         height: crate::HEIGHT as u32,
         max_iteration: max_iteration as u32,
-        zoom: zoom as f32,
-        x: x as f32,
-        y: y as f32,
+        zoom: zoom.to_f32(),
+        x: x.to_f32(),
+        y: y.to_f32(),
     };
 
     pipeline

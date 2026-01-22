@@ -1,4 +1,4 @@
-use crate::{HEIGHT, MANDELBROT_XRANGE, MANDELBROT_YRANGE, WIDTH};
+use crate::{HEIGHT, MANDELBROT_XRANGE, MANDELBROT_YRANGE, PRECISION, WIDTH};
 use rast::tint::{Color, Srgb};
 use rug::{
     Assign, Float,
@@ -13,14 +13,14 @@ use rug::{
 pub fn compute_mandelbrot(
     frame_buffer: &mut [Srgb],
     max_iteration: usize,
-    zoom: f64,
-    x: f64,
-    y: f64,
+    zoom: &Float,
+    x: &Float,
+    y: &Float,
 ) {
     // NOTE: When the zoom level is high, the perturbation algorithm I have
     // implemented becomes unstable, so it falls back to the original direct
     // implementation.
-    if zoom < 0.001 {
+    if *zoom < 0.001 {
         mandelbrot_perturbation(frame_buffer, max_iteration, zoom, x, y);
     } else {
         mandelbrot(frame_buffer, max_iteration, zoom, x, y);
@@ -30,10 +30,11 @@ pub fn compute_mandelbrot(
 fn mandelbrot_perturbation(
     frame_buffer: &mut [Srgb],
     max_iteration: usize,
-    zoom: f64,
-    x: f64,
-    y: f64,
+    zoom: &Float,
+    x: &Float,
+    y: &Float,
 ) {
+    let zoom = zoom.to_f64();
     let cx = x;
     let cy = y;
 
@@ -48,26 +49,25 @@ fn mandelbrot_perturbation(
     // Perturbation refernce orbit.
     let mut orbit = Vec::with_capacity(max_iteration);
 
-    const PREC: u32 = 1024;
-    let x0 = Float::with_val(PREC, cx);
-    let y0 = Float::with_val(PREC, cy);
-    let mut x = Float::with_val(PREC, 0.0);
-    let mut y = Float::with_val(PREC, 0.0);
-    let mut x2 = Float::with_val(PREC, 0.0);
-    let mut y2 = Float::with_val(PREC, 0.0);
-    let mut xy = Float::with_val(PREC, 0.0);
+    let x0 = cx;
+    let y0 = cy;
+    let mut x = Float::with_val(PRECISION, 0.0);
+    let mut y = Float::with_val(PRECISION, 0.0);
+    let mut x2 = Float::with_val(PRECISION, 0.0);
+    let mut y2 = Float::with_val(PRECISION, 0.0);
+    let mut xy = Float::with_val(PRECISION, 0.0);
     for _ in 0..max_iteration {
         orbit.push((x.to_f64(), y.to_f64()));
         x2.assign(&x * &x);
         y2.assign(&y * &y);
-        if (&x2 + &y2).complete(PREC) > 4.0 {
+        if (&x2 + &y2).complete(PRECISION) > 4.0 {
             break;
         }
         xy.assign(&x * &y);
         y.assign(&xy * 2.0);
-        y += &y0;
+        y += y0;
         x.assign(&x2 - &y2);
-        x += &x0;
+        x += x0;
     }
     float::free_cache(FreeCache::All);
 
@@ -144,9 +144,10 @@ fn mandelbrot_perturbation(
     });
 }
 
-fn mandelbrot(frame_buffer: &mut [Srgb], max_iteration: usize, zoom: f64, x: f64, y: f64) {
-    let cx = x;
-    let cy = y;
+fn mandelbrot(frame_buffer: &mut [Srgb], max_iteration: usize, zoom: &Float, x: &Float, y: &Float) {
+    let zoom = zoom.to_f64();
+    let cx = x.to_f64();
+    let cy = y.to_f64();
 
     let w = WIDTH as f64;
     let h = HEIGHT as f64;

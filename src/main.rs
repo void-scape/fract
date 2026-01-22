@@ -1,6 +1,12 @@
+use fract::PRECISION;
 use glazer::winit::{
     event::{DeviceEvent, KeyEvent, MouseScrollDelta, WindowEvent},
     keyboard::{KeyCode, PhysicalKey},
+};
+use rug::{
+    Assign, Float,
+    float::Round,
+    ops::{AddAssignRound, SubAssignRound},
 };
 use std::collections::VecDeque;
 
@@ -17,11 +23,11 @@ fn main() {
 
 struct Memory {
     fps_window: VecDeque<f32>,
-    zoom: f64,
+    zoom: Float,
     cursor_x: f64,
     cursor_y: f64,
-    cx: f64,
-    cy: f64,
+    cx: Float,
+    cy: Float,
     #[cfg(feature = "compute")]
     compute_pipeline: Option<fract::compute::Pipeline>,
 }
@@ -30,11 +36,11 @@ impl Default for Memory {
     fn default() -> Self {
         Self {
             fps_window: VecDeque::new(),
-            zoom: 1.0,
+            zoom: Float::with_val(PRECISION, 1.0),
             cursor_x: 0.0,
             cursor_y: 0.0,
-            cx: 0.0,
-            cy: 0.0,
+            cx: Float::with_val(PRECISION, 0.0),
+            cy: Float::with_val(PRECISION, 0.0),
             #[cfg(feature = "compute")]
             compute_pipeline: None,
         }
@@ -60,24 +66,30 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
         glazer::Input::Device(DeviceEvent::MouseWheel { delta }) => match delta {
             // Thank you Gemini!
             MouseScrollDelta::PixelDelta(delta) => {
-                let zoom_delta = delta.y.signum() * (delta.x * delta.x + delta.y * delta.y).sqrt()
+                let delta = delta.y.signum() * (delta.x * delta.x + delta.y * delta.y).sqrt()
                     / fract::HEIGHT as f64
-                    * memory.zoom
                     * 10.0;
+                let zoom_delta = Float::with_val(PRECISION, delta * &memory.zoom);
 
                 let mouse_base_x =
                     (memory.cursor_x / fract::WIDTH as f64) * fract::MANDELBROT_XRANGE - 2.00;
                 let mouse_base_y =
                     (memory.cursor_y / fract::HEIGHT as f64) * fract::MANDELBROT_YRANGE - 1.12;
 
-                memory.zoom -= zoom_delta;
+                memory.zoom.sub_assign_round(&zoom_delta, Round::Nearest);
 
                 if memory.zoom <= 0.0 {
-                    memory.zoom = 1e-15;
+                    memory.zoom.assign(1e-15);
                 }
 
-                memory.cx += mouse_base_x * zoom_delta;
-                memory.cy += mouse_base_y * zoom_delta;
+                let mouse_base_x = Float::with_val(PRECISION, mouse_base_x);
+                let mouse_base_y = Float::with_val(PRECISION, mouse_base_y);
+                memory
+                    .cx
+                    .add_assign_round(&mouse_base_x * &zoom_delta, Round::Nearest);
+                memory
+                    .cy
+                    .add_assign_round(&mouse_base_y * &zoom_delta, Round::Nearest);
             }
             _ => unimplemented!(),
         },
@@ -112,7 +124,7 @@ fn update_and_render(
     ));
     window.set_resizable(false);
 
-    let current_zoom_magnitude = -memory.zoom.log10();
+    let current_zoom_magnitude = -memory.zoom.to_f64().log10();
     #[cfg(feature = "compute")]
     let max_iteration = (1000.0 + 500.0 * current_zoom_magnitude.max(0.0)) as usize;
     #[cfg(not(feature = "compute"))]
@@ -128,17 +140,17 @@ fn update_and_render(
         pipeline,
         frame_buffer,
         max_iteration,
-        memory.zoom,
-        memory.cx,
-        memory.cy,
+        &memory.zoom,
+        &memory.cx,
+        &memory.cy,
     );
 
     #[cfg(not(feature = "compute"))]
     fract::software::compute_mandelbrot(
         frame_buffer,
         max_iteration,
-        memory.zoom,
-        memory.cx,
-        memory.cy,
+        &memory.zoom,
+        &memory.cx,
+        &memory.cy,
     );
 }
