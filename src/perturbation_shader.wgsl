@@ -10,6 +10,14 @@ struct MandelbrotUniform {
 	zoom: f32,
 	cx: f32,
 	cy: f32,
+	//
+    approx_iteration: u32,
+    ax: f32,
+    ay: f32,
+    bx: f32,
+    by: f32,
+    cxx: f32,
+    cyy: f32,
 }
 
 @group(0) @binding(0) var<uniform> args: MandelbrotUniform;
@@ -54,6 +62,35 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 	var dy = dy0;
 	var iteration = 0u;
 	var ref_iteration = 0u;
+
+	// If there are coefficients present, approximate the position
+	// of (dx, dy) at iteration `approx_iteration`.
+	if args.approx_iteration > 0 {
+		// D = Ad + Bd^2 + Cd^3
+		let d = dx0;
+		let di = dy0;
+
+		let d2 = d * d - di * di;
+		let d2i = di * d + d * di;
+
+		let d3 = d2 * d - d2i * di;
+		let d3i = d2 * di + d2i * d;
+
+		let ad = args.ax * d - args.ay * di;
+		let adi = args.ay * d + args.ax * di;
+
+		let bd2 = args.bx * d2 - args.by * d2i;
+		let bd2i = args.by * d2 + args.bx * d2i;
+
+		let cd3 = args.cxx * d3 - args.cyy * d3i;
+		let cd3i = args.cyy * d3 + args.cxx * d3i;
+
+		dx = ad + bd2 + cd3;
+		dy = adi + bd2i + cd3i;
+
+		iteration = args.approx_iteration;
+		ref_iteration = args.approx_iteration;
+	}
 
 	while iteration < args.max_iteration {
 		var ax = orbit[ref_iteration * 2];

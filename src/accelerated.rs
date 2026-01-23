@@ -1,8 +1,8 @@
-use crate::{MANDELBROT_XRANGE, MANDELBROT_YRANGE, PRECISION};
+use crate::{MANDELBROT_XRANGE, MANDELBROT_YRANGE, PRECISION, series_approximation_coefficients};
 use glazer::winit::window::Window;
 use rug::{Assign, Float, ops::CompleteRound};
 
-pub const ITERATIONS: usize = 3500;
+pub const ITERATIONS: usize = 10_000;
 
 pub struct Pipeline {
     surface: wgpu::Surface<'static>,
@@ -16,7 +16,9 @@ pub struct Pipeline {
     uniform_buffer: wgpu::Buffer,
     orbit_buffer: wgpu::Buffer,
     orbit: Vec<(f32, f32)>,
-    last_zoom: Float,
+    zoom: Float,
+    x: Float,
+    y: Float,
 }
 
 pub fn create_pipeline(window: &Window) -> Pipeline {
@@ -221,7 +223,9 @@ pub fn create_pipeline(window: &Window) -> Pipeline {
         uniform_buffer,
         orbit_buffer,
         orbit: Vec::new(),
-        last_zoom: Float::with_val(PRECISION, 0.0),
+        zoom: Float::with_val(PRECISION, 0.0),
+        x: Float::with_val(PRECISION, 0.0),
+        y: Float::with_val(PRECISION, 0.0),
     }
 }
 
@@ -239,6 +243,14 @@ struct MandelbrotUniform {
     zoom: f32,
     cx: f32,
     cy: f32,
+    //
+    approx_iteration: u32,
+    ax: f32,
+    ay: f32,
+    bx: f32,
+    by: f32,
+    cxx: f32,
+    cyy: f32,
 }
 
 fn byte_slice<T>(slice: &[T]) -> &[u8] {
@@ -255,11 +267,12 @@ pub fn compute_mandelbrot(
     let cx = x;
     let cy = y;
 
-    if *zoom != pipeline.last_zoom {
-        pipeline.last_zoom.assign(zoom);
+    if *zoom != pipeline.zoom || *x != pipeline.x || *y != pipeline.y {
+        pipeline.zoom.assign(zoom);
+        pipeline.x.assign(x);
+        pipeline.y.assign(y);
 
         pipeline.orbit.clear();
-
         let x0 = x;
         let y0 = y;
         let mut x = Float::with_val(PRECISION, 0.0);
@@ -283,23 +296,45 @@ pub fn compute_mandelbrot(
 
         let w = crate::WIDTH as f64;
         let h = crate::HEIGHT as f64;
-        let xstep = (Float::with_val(PRECISION, MANDELBROT_XRANGE) * zoom / w).to_f32();
-        let ystep = (Float::with_val(PRECISION, MANDELBROT_YRANGE) * zoom / h).to_f32();
-        let sdx = (Float::with_val(PRECISION, -2.00) * zoom).to_f32();
-        let sdy = (Float::with_val(PRECISION, -1.12) * zoom).to_f32();
+        let xstep = (Float::with_val(PRECISION, MANDELBROT_XRANGE) * zoom / w).to_f64();
+        let ystep = (Float::with_val(PRECISION, MANDELBROT_YRANGE) * zoom / h).to_f64();
+        let sdx = (Float::with_val(PRECISION, -2.00) * zoom).to_f64();
+        let sdy = (Float::with_val(PRECISION, -1.12) * zoom).to_f64();
+        let (a, b, c, approx_iteration) =
+            series_approximation_coefficients(&pipeline.orbit, sdx, sdy, xstep, ystep);
+
+        println!("x: {}", cx.to_string_radix(10, Some(50)));
+        println!("y: {}", cy.to_string_radix(10, Some(50)));
+        println!("z: {}", zoom.to_string_radix(10, Some(50)));
+        println!("i: {}", max_iteration);
+
+        println!("a: {}", a);
+        println!("b: {}", b);
+        println!("c: {}", c);
+
+        println!("approx: {}", approx_iteration);
+        println!("orbit len: {}", pipeline.orbit.len());
+        println!();
 
         let args = MandelbrotUniform {
             width: crate::WIDTH as u32,
             height: crate::HEIGHT as u32,
             max_iteration: max_iteration as u32,
-            xstep,
-            ystep,
-            sdx,
-            sdy,
+            xstep: xstep as f32,
+            ystep: ystep as f32,
+            sdx: sdx as f32,
+            sdy: sdy as f32,
             orbit_len: pipeline.orbit.len() as u32,
             zoom: zoom.to_f32(),
             cx: cx.to_f32(),
             cy: cy.to_f32(),
+            approx_iteration: approx_iteration as u32,
+            ax: a.re as f32,
+            ay: a.im as f32,
+            bx: b.re as f32,
+            by: b.im as f32,
+            cxx: c.re as f32,
+            cyy: c.im as f32,
         };
 
         pipeline

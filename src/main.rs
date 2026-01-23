@@ -30,19 +30,23 @@ struct Memory {
     cy: Float,
     #[cfg(feature = "accelerated")]
     pipeline: Option<fract::accelerated::Pipeline>,
+    #[cfg(feature = "software")]
+    pipeline: fract::software::Pipeline,
 }
 
 impl Default for Memory {
     fn default() -> Self {
         Self {
             fps_window: VecDeque::new(),
-            zoom: Float::with_val(PRECISION, 1.0),
             cursor_x: 0.0,
             cursor_y: 0.0,
+            zoom: Float::with_val(PRECISION, 1.0),
             cx: Float::with_val(PRECISION, 0.0),
             cy: Float::with_val(PRECISION, 0.0),
             #[cfg(feature = "accelerated")]
             pipeline: None,
+            #[cfg(feature = "software")]
+            pipeline: fract::software::Pipeline::default(),
         }
     }
 }
@@ -85,10 +89,6 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
             memory
                 .cy
                 .add_assign_round(&mouse_base_y * &zoom_delta, Round::Nearest);
-
-            println!("x: {}", memory.cx.to_string_radix(10, Some(50)));
-            println!("y: {}", memory.cy.to_string_radix(10, Some(50)));
-            println!("z: {}", memory.zoom.to_string_radix(10, Some(50)));
         }
         glazer::Input::Device(DeviceEvent::MouseWheel { delta }) => match delta {
             // Thank you Gemini!
@@ -113,10 +113,6 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
                 memory
                     .cy
                     .add_assign_round(&mouse_base_y * &zoom_delta, Round::Nearest);
-
-                println!("x: {}", memory.cx.to_string_radix(10, Some(50)));
-                println!("y: {}", memory.cy.to_string_radix(10, Some(50)));
-                println!("z: {}", memory.zoom.to_string_radix(10, Some(50)));
             }
             _ => unimplemented!(),
         },
@@ -127,7 +123,7 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
 fn update_and_render(
     glazer::PlatformUpdate {
         memory,
-        #[cfg(not(feature = "accelerated"))]
+        #[cfg(feature = "software")]
         frame_buffer,
         width,
         height,
@@ -139,8 +135,7 @@ fn update_and_render(
     assert_eq!(width, fract::WIDTH);
     assert_eq!(height, fract::HEIGHT);
 
-    let fps_window_size = 50;
-
+    let fps_window_size = 1;
     memory.fps_window.push_back(1.0 / delta);
     if memory.fps_window.len() > fps_window_size {
         memory.fps_window.pop_front();
@@ -154,9 +149,9 @@ fn update_and_render(
 
     #[cfg(feature = "accelerated")]
     let max_iteration = fract::accelerated::ITERATIONS;
-    #[cfg(not(feature = "accelerated"))]
+    #[cfg(feature = "software")]
     let current_zoom_magnitude = -memory.zoom.to_f64().log10();
-    #[cfg(not(feature = "accelerated"))]
+    #[cfg(feature = "software")]
     let max_iteration = (100.0 + 50.0 * current_zoom_magnitude.max(0.0)) as usize;
 
     #[cfg(feature = "accelerated")]
@@ -173,8 +168,9 @@ fn update_and_render(
         &memory.cy,
     );
 
-    #[cfg(not(feature = "accelerated"))]
+    #[cfg(feature = "software")]
     fract::software::compute_mandelbrot(
+        &mut memory.pipeline,
         frame_buffer,
         max_iteration,
         &memory.zoom,
