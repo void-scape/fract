@@ -26,6 +26,9 @@ pub struct Pipeline {
 pub fn create_pipeline(window: &Window) -> Pipeline {
     env_logger::init();
 
+    window.set_resizable(false);
+    window.set_title("Mandelbrot Set");
+
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
     let surface = instance
         .create_surface(window)

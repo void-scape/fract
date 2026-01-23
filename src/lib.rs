@@ -2,10 +2,8 @@
 #![allow(internal_features)]
 #![feature(core_intrinsics)]
 
-#[cfg(feature = "accelerated")]
-pub mod accelerated;
-#[cfg(feature = "software")]
-pub mod software;
+pub mod pipeline;
+pub use pipeline::*;
 
 pub const WIDTH: usize = 1600;
 pub const HEIGHT: usize = 1600;
