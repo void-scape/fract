@@ -7,6 +7,9 @@ struct MandelbrotUniform {
     sdx: f32,
     sdy: f32,
 	orbit_len: u32,
+	zoom: f32,
+	cx: f32,
+	cy: f32,
 }
 
 @group(0) @binding(0) var<uniform> args: MandelbrotUniform;
@@ -36,77 +39,38 @@ fn vs_main(@builtin(vertex_index) in_vertex_index: u32) -> VertexOutput {
     out.uv = uv[in_vertex_index];
     return out;
 }
-
 fn hsv2rgb(c: vec3<f32>) -> vec3<f32> {
     let K = vec4<f32>(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
     let p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
     return c.z * mix(K.xxx, clamp(p - K.xxx, vec3(0.0), vec3(1.0)), c.y);
 }
-
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let px = in.uv.x * f32(args.width);
-    let py = (1.0 - in.uv.y) * f32(args.height);
+    let py = in.uv.y * f32(args.height);
 
-	let dx0 = args.sdx + px * args.xstep;
-	let dy0 = args.sdy + py * args.ystep;
+    let MANDELBROT_XRANGE = 2.47;
+    let MANDELBROT_YRANGE = 2.24;
 
-	// Compute the delta of (x0, y0) with respect to the
-	// reference orbit.
-	var dx = dx0;
-	var dy = dy0;
-	var iteration = 0u;
-	var ref_iteration = 0u;
+    let x0 = ((px / f32(args.width) * MANDELBROT_XRANGE) - 2.00) * args.zoom + args.cx;
+    let y0 = ((py / f32(args.height) * MANDELBROT_YRANGE) - 1.12) * args.zoom - args.cy;
 
-	while iteration < args.max_iteration {
-		var ax = orbit[ref_iteration * 2];
-		var ay = orbit[ref_iteration * 2 + 1];
-		ax *= 2.0;
-		ay *= 2.0;
+    var x: f32 = 0.0;
+    var y: f32 = 0.0;
+    var iteration: u32 = 0;
 
-		// ad = a * d
-		let adx = ax * dx - ay * dy;
-		let ady = ax * dy + ay * dx;
+    while (iteration < args.max_iteration) {
+        let x2 = x * x;
+        let y2 = y * y;
 
-		// a = a * d + d * d
-		ax = adx + dx * dx - dy * dy;
-		ay = ady + dx * dy + dy * dx;
+        if (x2 + y2 > 10000.0) {
+            break;
+        }
 
-		// d = a * d + d * d + d0
-		dx = ax + dx0;
-		dy = ay + dy0;
-
-		ref_iteration += 1;
-
-		// The full value of (x0, y0) is reconstructed from
-		// the reference orbit and checked for escape time.
-		let x = orbit[ref_iteration * 2];
-		let y = orbit[ref_iteration * 2 + 1];
-		let zmag = (dx + x) * (dx + x) + (dy + y) * (dy + y);
-		let dmag = dx * dx + dy * dy;
-
-		if zmag > 4.0 {
-			break;
-		} else if zmag < dmag || ref_iteration == args.orbit_len - 1 {
-			dx += x;
-			dy += y;
-			ref_iteration = 0;
-		}
-
-		iteration += 1;
-	}
-    
-	if (iteration == args.max_iteration) {
-        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        y = (2.0 * x * y) + y0;
+        x = x2 - y2 + x0;
+        iteration = iteration + 1;
     }
-    
-    let l = f32(iteration) / f32(args.max_iteration);
-    let hue = l * 0.8;
-    let rgb = hsv2rgb(vec3<f32>(hue, 1.0, 1.0));
 
-	if (SWAP_CHANNELS) {
-        return vec4<f32>(rgb.b, rgb.g, rgb.r, 1.0);
-    } else {
-        return vec4<f32>(rgb, 1.0);
-    }
+	return iteration_to_rgb(iteration, x, y);
 }

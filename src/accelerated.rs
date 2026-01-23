@@ -11,6 +11,7 @@ pub struct Pipeline {
     queue: wgpu::Queue,
     //
     pipeline: wgpu::RenderPipeline,
+    perturbation_pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
     uniform_buffer: wgpu::Buffer,
     orbit_buffer: wgpu::Buffer,
@@ -128,7 +129,16 @@ pub fn create_pipeline(window: &Window) -> Pipeline {
         ..Default::default()
     });
 
-    let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
+    let perturbation_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: None,
+        source: wgpu::ShaderSource::Wgsl(
+            concat!(
+                include_str!("color.wgsl"),
+                include_str!("perturbation_shader.wgsl")
+            )
+            .into(),
+        ),
+    });
 
     // Metal uses Bgra, so the shader might need to swap the channels.
     let needs_swap = matches!(
@@ -137,6 +147,40 @@ pub fn create_pipeline(window: &Window) -> Pipeline {
     );
     let constants = [("SWAP_CHANNELS", if needs_swap { 1.0 } else { 0.0 })];
 
+    let perturbation_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: None,
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &perturbation_shader,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &constants,
+                ..Default::default()
+            },
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &perturbation_shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(surface_format.into())],
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &constants,
+                ..Default::default()
+            },
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        cache: None,
+        multiview_mask: None,
+    });
+
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: None,
+        source: wgpu::ShaderSource::Wgsl(
+            concat!(include_str!("color.wgsl"), include_str!("shader.wgsl")).into(),
+        ),
+    });
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: None,
         layout: Some(&pipeline_layout),
@@ -172,11 +216,12 @@ pub fn create_pipeline(window: &Window) -> Pipeline {
         queue,
         //
         pipeline,
+        perturbation_pipeline,
         bind_group,
         uniform_buffer,
         orbit_buffer,
         orbit: Vec::new(),
-        last_zoom: Float::with_val(PRECISION, 1.0),
+        last_zoom: Float::with_val(PRECISION, 0.0),
     }
 }
 
@@ -191,6 +236,9 @@ struct MandelbrotUniform {
     sdx: f32,
     sdy: f32,
     orbit_len: u32,
+    zoom: f32,
+    cx: f32,
+    cy: f32,
 }
 
 fn byte_slice<T>(slice: &[T]) -> &[u8] {
@@ -204,6 +252,9 @@ pub fn compute_mandelbrot(
     x: &Float,
     y: &Float,
 ) {
+    let cx = x;
+    let cy = y;
+
     if *zoom != pipeline.last_zoom {
         pipeline.last_zoom.assign(zoom);
 
@@ -229,32 +280,35 @@ pub fn compute_mandelbrot(
             x.assign(&x2 - &y2);
             x += x0;
         }
+
+        let w = crate::WIDTH as f64;
+        let h = crate::HEIGHT as f64;
+        let xstep = (Float::with_val(PRECISION, MANDELBROT_XRANGE) * zoom / w).to_f32();
+        let ystep = (Float::with_val(PRECISION, MANDELBROT_YRANGE) * zoom / h).to_f32();
+        let sdx = (Float::with_val(PRECISION, -2.00) * zoom).to_f32();
+        let sdy = (Float::with_val(PRECISION, -1.12) * zoom).to_f32();
+
+        let args = MandelbrotUniform {
+            width: crate::WIDTH as u32,
+            height: crate::HEIGHT as u32,
+            max_iteration: max_iteration as u32,
+            xstep,
+            ystep,
+            sdx,
+            sdy,
+            orbit_len: pipeline.orbit.len() as u32,
+            zoom: zoom.to_f32(),
+            cx: cx.to_f32(),
+            cy: cy.to_f32(),
+        };
+
+        pipeline
+            .queue
+            .write_buffer(&pipeline.uniform_buffer, 0, byte_slice(&[args]));
+        pipeline
+            .queue
+            .write_buffer(&pipeline.orbit_buffer, 0, byte_slice(&pipeline.orbit));
     }
-
-    let w = crate::WIDTH as f64;
-    let h = crate::HEIGHT as f64;
-    let xstep = (Float::with_val(PRECISION, MANDELBROT_XRANGE) * zoom / w).to_f32();
-    let ystep = (Float::with_val(PRECISION, MANDELBROT_YRANGE) * zoom / h).to_f32();
-    let sdx = (Float::with_val(PRECISION, -2.00) * zoom).to_f32();
-    let sdy = (Float::with_val(PRECISION, -1.12) * zoom).to_f32();
-
-    let args = MandelbrotUniform {
-        width: crate::WIDTH as u32,
-        height: crate::HEIGHT as u32,
-        max_iteration: max_iteration as u32,
-        xstep,
-        ystep,
-        sdx,
-        sdy,
-        orbit_len: pipeline.orbit.len() as u32,
-    };
-
-    pipeline
-        .queue
-        .write_buffer(&pipeline.uniform_buffer, 0, byte_slice(&[args]));
-    pipeline
-        .queue
-        .write_buffer(&pipeline.orbit_buffer, 0, byte_slice(&pipeline.orbit));
 
     let mut encoder = pipeline
         .device
@@ -280,7 +334,14 @@ pub fn compute_mandelbrot(
         occlusion_query_set: None,
         multiview_mask: None,
     });
-    rpass.set_pipeline(&pipeline.pipeline);
+    // NOTE: When the zoom level is high, the perturbation algorithm I have
+    // implemented becomes unstable, so it falls back to the original direct
+    // implementation.
+    if *zoom < 0.001 {
+        rpass.set_pipeline(&pipeline.perturbation_pipeline);
+    } else {
+        rpass.set_pipeline(&pipeline.pipeline);
+    }
     rpass.set_bind_group(0, &pipeline.bind_group, &[]);
     rpass.draw(0..3, 0..1);
     drop(rpass);
