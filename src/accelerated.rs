@@ -15,6 +15,8 @@ pub struct Pipeline {
     bind_group: wgpu::BindGroup,
     uniform_buffer: wgpu::Buffer,
     orbit_buffer: wgpu::Buffer,
+    offscreen_texture: wgpu::Texture,
+    offscreen_texture_view: wgpu::TextureView,
     orbit: Vec<(f32, f32)>,
     zoom: Float,
     x: Float,
@@ -60,7 +62,7 @@ pub fn create_pipeline(window: &Window) -> Pipeline {
     println!("Surface format: {:?}", surface_format);
 
     let config = wgpu::SurfaceConfiguration {
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
         format: surface_format,
         width: crate::WIDTH as u32,
         height: crate::HEIGHT as u32,
@@ -211,6 +213,23 @@ pub fn create_pipeline(window: &Window) -> Pipeline {
         multiview_mask: None,
     });
 
+    let texture_desc = wgpu::TextureDescriptor {
+        size: wgpu::Extent3d {
+            width: crate::WIDTH as u32,
+            height: crate::HEIGHT as u32,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: surface_format,
+        usage: wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::RENDER_ATTACHMENT,
+        label: None,
+        view_formats: &[],
+    };
+    let offscreen_texture = device.create_texture(&texture_desc);
+    let offscreen_texture_view = offscreen_texture.create_view(&Default::default());
+
     Pipeline {
         surface,
         _config: config,
@@ -222,6 +241,8 @@ pub fn create_pipeline(window: &Window) -> Pipeline {
         bind_group,
         uniform_buffer,
         orbit_buffer,
+        offscreen_texture,
+        offscreen_texture_view,
         orbit: Vec::new(),
         zoom: Float::with_val(PRECISION, 0.0),
         x: Float::with_val(PRECISION, 0.0),
@@ -264,99 +285,98 @@ pub fn compute_mandelbrot(
     x: &Float,
     y: &Float,
 ) {
+    if *zoom == pipeline.zoom && *x == pipeline.x && *y == pipeline.y {
+        return;
+    }
+
     let cx = x;
     let cy = y;
-
-    if *zoom != pipeline.zoom || *x != pipeline.x || *y != pipeline.y {
-        pipeline.zoom.assign(zoom);
-        pipeline.x.assign(x);
-        pipeline.y.assign(y);
-
-        pipeline.orbit.clear();
-        let x0 = x;
-        let y0 = y;
-        let mut x = Float::with_val(PRECISION, 0.0);
-        let mut y = Float::with_val(PRECISION, 0.0);
-        let mut x2 = Float::with_val(PRECISION, 0.0);
-        let mut y2 = Float::with_val(PRECISION, 0.0);
-        let mut xy = Float::with_val(PRECISION, 0.0);
-        for _ in 0..max_iteration {
-            pipeline.orbit.push((x.to_f32(), y.to_f32()));
-            x2.assign(&x * &x);
-            y2.assign(&y * &y);
-            if (&x2 + &y2).complete(PRECISION) > 4.0 {
-                break;
-            }
-            xy.assign(&x * &y);
-            y.assign(&xy * 2.0);
-            y += y0;
-            x.assign(&x2 - &y2);
-            x += x0;
-        }
-
-        let w = crate::WIDTH as f64;
-        let h = crate::HEIGHT as f64;
-        let xstep = (Float::with_val(PRECISION, MANDELBROT_XRANGE) * zoom / w).to_f64();
-        let ystep = (Float::with_val(PRECISION, MANDELBROT_YRANGE) * zoom / h).to_f64();
-        let sdx = (Float::with_val(PRECISION, -2.00) * zoom).to_f64();
-        let sdy = (Float::with_val(PRECISION, -1.12) * zoom).to_f64();
-        let (a, b, c, approx_iteration) =
-            series_approximation_coefficients(&pipeline.orbit, sdx, sdy, xstep, ystep);
-
-        println!("x: {}", cx.to_string_radix(10, Some(50)));
-        println!("y: {}", cy.to_string_radix(10, Some(50)));
-        println!("z: {}", zoom.to_string_radix(10, Some(50)));
-        println!("i: {}", max_iteration);
-
-        println!("a: {}", a);
-        println!("b: {}", b);
-        println!("c: {}", c);
-
-        println!("approx: {}", approx_iteration);
-        println!("orbit len: {}", pipeline.orbit.len());
-        println!();
-
-        let args = MandelbrotUniform {
-            width: crate::WIDTH as u32,
-            height: crate::HEIGHT as u32,
-            max_iteration: max_iteration as u32,
-            xstep: xstep as f32,
-            ystep: ystep as f32,
-            sdx: sdx as f32,
-            sdy: sdy as f32,
-            orbit_len: pipeline.orbit.len() as u32,
-            zoom: zoom.to_f32(),
-            cx: cx.to_f32(),
-            cy: cy.to_f32(),
-            approx_iteration: approx_iteration as u32,
-            ax: a.re as f32,
-            ay: a.im as f32,
-            bx: b.re as f32,
-            by: b.im as f32,
-            cxx: c.re as f32,
-            cyy: c.im as f32,
-        };
-
-        pipeline
-            .queue
-            .write_buffer(&pipeline.uniform_buffer, 0, byte_slice(&[args]));
-        pipeline
-            .queue
-            .write_buffer(&pipeline.orbit_buffer, 0, byte_slice(&pipeline.orbit));
-    }
 
     let mut encoder = pipeline
         .device
         .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-
     let surface_texture = pipeline.surface.get_current_texture().unwrap();
-    let view = surface_texture
-        .texture
-        .create_view(&wgpu::TextureViewDescriptor::default());
+
+    pipeline.zoom.assign(zoom);
+    pipeline.x.assign(x);
+    pipeline.y.assign(y);
+
+    pipeline.orbit.clear();
+    let x0 = x;
+    let y0 = y;
+    let mut x = Float::with_val(PRECISION, 0.0);
+    let mut y = Float::with_val(PRECISION, 0.0);
+    let mut x2 = Float::with_val(PRECISION, 0.0);
+    let mut y2 = Float::with_val(PRECISION, 0.0);
+    let mut xy = Float::with_val(PRECISION, 0.0);
+    for _ in 0..max_iteration {
+        pipeline.orbit.push((x.to_f32(), y.to_f32()));
+        x2.assign(&x * &x);
+        y2.assign(&y * &y);
+        if (&x2 + &y2).complete(PRECISION) > 4.0 {
+            break;
+        }
+        xy.assign(&x * &y);
+        y.assign(&xy * 2.0);
+        y += y0;
+        x.assign(&x2 - &y2);
+        x += x0;
+    }
+
+    let w = crate::WIDTH as f64;
+    let h = crate::HEIGHT as f64;
+    let xstep = (Float::with_val(PRECISION, MANDELBROT_XRANGE) * zoom / w).to_f64();
+    let ystep = (Float::with_val(PRECISION, MANDELBROT_YRANGE) * zoom / h).to_f64();
+    let sdx = (Float::with_val(PRECISION, -2.00) * zoom).to_f64();
+    let sdy = (Float::with_val(PRECISION, -1.12) * zoom).to_f64();
+    let (a, b, c, approx_iteration) =
+        series_approximation_coefficients(&pipeline.orbit, sdx, sdy, xstep, ystep);
+
+    println!("x: {}", cx.to_string_radix(10, Some(50)));
+    println!("y: {}", cy.to_string_radix(10, Some(50)));
+    println!("z: {}", zoom.to_string_radix(10, Some(50)));
+    println!("i: {}", max_iteration);
+
+    println!("a: {}", a);
+    println!("b: {}", b);
+    println!("c: {}", c);
+
+    println!("approx: {}", approx_iteration);
+    println!("orbit len: {}", pipeline.orbit.len());
+    println!();
+
+    let args = MandelbrotUniform {
+        width: crate::WIDTH as u32,
+        height: crate::HEIGHT as u32,
+        max_iteration: max_iteration as u32,
+        xstep: xstep as f32,
+        ystep: ystep as f32,
+        sdx: sdx as f32,
+        sdy: sdy as f32,
+        orbit_len: pipeline.orbit.len() as u32,
+        zoom: zoom.to_f32(),
+        cx: cx.to_f32(),
+        cy: cy.to_f32(),
+        approx_iteration: approx_iteration as u32,
+        ax: a.re as f32,
+        ay: a.im as f32,
+        bx: b.re as f32,
+        by: b.im as f32,
+        cxx: c.re as f32,
+        cyy: c.im as f32,
+    };
+
+    pipeline
+        .queue
+        .write_buffer(&pipeline.uniform_buffer, 0, byte_slice(&[args]));
+    pipeline
+        .queue
+        .write_buffer(&pipeline.orbit_buffer, 0, byte_slice(&pipeline.orbit));
+
     let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: None,
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view: &view,
+            view: &pipeline.offscreen_texture_view,
             resolve_target: None,
             ops: wgpu::Operations {
                 load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -381,6 +401,25 @@ pub fn compute_mandelbrot(
     rpass.draw(0..3, 0..1);
     drop(rpass);
 
+    encoder.copy_texture_to_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &pipeline.offscreen_texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyTextureInfo {
+            texture: &surface_texture.texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::Extent3d {
+            height: crate::HEIGHT as u32,
+            width: crate::WIDTH as u32,
+            depth_or_array_layers: 1,
+        },
+    );
     pipeline.queue.submit([encoder.finish()]);
     surface_texture.present();
 }
