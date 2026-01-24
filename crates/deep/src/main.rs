@@ -131,25 +131,29 @@ fn main() -> std::io::Result<ExitCode> {
     assert!(sample_rate.is_multiple_of(fps));
     let samples = vec![(0.0, 0.0); sample_rate / fps];
 
+    use indicatif::ProgressBar;
+    let bar = ProgressBar::new(args.frames as u64);
+
     let mut encoder = Encoder::new(width, height, fps, sample_rate)?;
-    for i in 0..args.frames {
-        time(i, || {
-            compute::software::compute_mandelbrot(
-                &mut pipeline,
-                &mut frame_buffer,
-                iterations,
-                &z,
-                &x,
-                &y,
-                &palette,
-                width,
-                height,
-            );
-            let zoom_delta = Float::with_val(PRECISION, &z * args.zoom);
-            z.add_assign_round(zoom_delta, rug::float::Round::Nearest);
-            encoder.render_frame(&frame_buffer, &samples)
-        })?;
+    for _ in 0..args.frames {
+        compute::software::compute_mandelbrot(
+            &mut pipeline,
+            &mut frame_buffer,
+            iterations,
+            &z,
+            &x,
+            &y,
+            &palette,
+            width,
+            height,
+        );
+        let zoom_delta = Float::with_val(PRECISION, &z * args.zoom);
+        z.add_assign_round(zoom_delta, rug::float::Round::Nearest);
+        encoder.render_frame(&frame_buffer, &samples)?;
+        bar.inc(1);
     }
+
+    bar.finish();
     encoder.finish(&args.output)?;
 
     Ok(ExitCode::SUCCESS)
