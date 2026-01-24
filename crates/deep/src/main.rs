@@ -14,6 +14,10 @@ struct Args {
     #[arg(short, long, default_value_t = 1)]
     frames: usize,
 
+    /// Factor added to the zoom every frame.
+    #[arg(short, long, default_value_t = 0.001)]
+    zoom: f32,
+
     /// Path to a config toml.
     #[arg(short, long)]
     config: Option<String>,
@@ -141,7 +145,7 @@ fn main() -> std::io::Result<ExitCode> {
                 width,
                 height,
             );
-            let zoom_delta = Float::with_val(PRECISION, &z * 0.0005);
+            let zoom_delta = Float::with_val(PRECISION, &z * args.zoom);
             z.add_assign_round(zoom_delta, rug::float::Round::Nearest);
             encoder.render_frame(&frame_buffer, &samples)
         })?;
