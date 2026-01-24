@@ -5,9 +5,10 @@ edition = "2024"
 
 [features]
 default = ["env_logger", "pollster", "wgpu", "winit"]
-software = ["rayon", "tint"]
+software = ["rayon"]
 
 [dependencies]
+tint = { path = "../../../blaze/crates/tint" }
 rug = { workspace = true }
 num = "0.4.3"
 
@@ -19,4 +20,3 @@ winit = { version = "0.30", optional = true, default-features = false, features 
 ] }
 
 rayon = { version = "1.11.0", optional = true }
-tint = { path = "../../../blaze/crates/tint", optional = true }

@@ -9,3 +9,7 @@ compute = { path = "../compute", default-features = false, features = [
 ] }
 tint = { path = "../../../blaze/crates/tint" }
 rug = { workspace = true }
+clap = { version = "4.5.54", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive"] }
+toml = "0.9.11"
+png = { version = "0.18.0", features = ["unstable", "zlib-rs"] }

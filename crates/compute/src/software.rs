@@ -1,10 +1,7 @@
-use crate::{
-    HEIGHT, MANDELBROT_XRANGE, MANDELBROT_YRANGE, PRECISION, WIDTH,
-    series_approximation_coefficients,
-};
+use crate::{PRECISION, series_approximation_coefficients};
 use rayon::prelude::*;
 use rug::{Assign, Float, ops::CompleteRound};
-use tint::{Color, Srgb};
+use tint::{Color, Sbgr};
 
 // Implementation derived from:
 // - https://en.wikipedia.org/wiki/Mandelbrot_set#Computer_drawings.
@@ -12,52 +9,125 @@ use tint::{Color, Srgb};
 // - https://fractalforums.org/index.php?topic=4360.0
 pub fn compute_mandelbrot(
     pipeline: &mut Pipeline,
-    frame_buffer: &mut [Srgb],
+    frame_buffer: &mut [Sbgr],
     max_iteration: usize,
     zoom: &Float,
     x: &Float,
     y: &Float,
+    palette: &[Sbgr],
+    width: usize,
+    height: usize,
 ) {
-    if *zoom == pipeline.zoom && *x == pipeline.x && *y == pipeline.y {
-        frame_buffer.copy_from_slice(&pipeline.buffer);
-        return;
-    }
+    if let Some(buffered) = pipeline.buffered.as_mut() {
+        if buffered.buffer.is_empty() {
+            for _ in 0..width * height {
+                buffered.buffer.push(Sbgr::default());
+            }
+        }
 
-    pipeline.zoom.assign(zoom);
-    pipeline.x.assign(x);
-    pipeline.y.assign(y);
+        if *zoom == buffered.zoom && *x == buffered.x && *y == buffered.y {
+            frame_buffer.copy_from_slice(&buffered.buffer);
+            return;
+        }
 
-    // NOTE: When the zoom level is high, the perturbation algorithm I have
-    // implemented becomes unstable, so it falls back to the original direct
-    // implementation.
-    if *zoom < 0.001 {
-        mandelbrot_perturbation(
-            &mut pipeline.orbit,
-            &mut pipeline.buffer,
-            max_iteration,
-            zoom,
-            x,
-            y,
-        );
+        buffered.zoom.assign(zoom);
+        buffered.x.assign(x);
+        buffered.y.assign(y);
+
+        // NOTE: When the zoom level is high, the perturbation algorithm I have
+        // implemented becomes unstable, so it falls back to the original direct
+        // implementation.
+        if *zoom < 0.001 {
+            mandelbrot_perturbation(
+                &mut pipeline.orbit,
+                &mut buffered.buffer,
+                max_iteration,
+                zoom,
+                x,
+                y,
+                palette,
+                width,
+                height,
+            );
+        } else {
+            mandelbrot(
+                &mut buffered.buffer,
+                max_iteration,
+                zoom,
+                x,
+                y,
+                palette,
+                width,
+                height,
+            );
+        }
+
+        frame_buffer.copy_from_slice(&buffered.buffer);
     } else {
-        mandelbrot(&mut pipeline.buffer, max_iteration, zoom, x, y);
+        // NOTE: When the zoom level is high, the perturbation algorithm I have
+        // implemented becomes unstable, so it falls back to the original direct
+        // implementation.
+        if *zoom < 0.001 {
+            mandelbrot_perturbation(
+                &mut pipeline.orbit,
+                frame_buffer,
+                max_iteration,
+                zoom,
+                x,
+                y,
+                palette,
+                width,
+                height,
+            );
+        } else {
+            mandelbrot(
+                frame_buffer,
+                max_iteration,
+                zoom,
+                x,
+                y,
+                palette,
+                width,
+                height,
+            );
+        }
     }
-    frame_buffer.copy_from_slice(&pipeline.buffer);
 }
 
 pub struct Pipeline {
-    buffer: Vec<Srgb>,
     orbit: Vec<(f64, f64)>,
-    zoom: Float,
-    x: Float,
-    y: Float,
+    buffered: Option<Buffered>,
 }
 
 impl Default for Pipeline {
     fn default() -> Self {
         Self {
-            buffer: vec![Srgb::default(); WIDTH * HEIGHT],
             orbit: Vec::new(),
+            buffered: Some(Buffered::default()),
+        }
+    }
+}
+
+impl Pipeline {
+    pub fn unbuffered() -> Self {
+        Self {
+            orbit: Vec::new(),
+            buffered: None,
+        }
+    }
+}
+
+struct Buffered {
+    buffer: Vec<Sbgr>,
+    zoom: Float,
+    x: Float,
+    y: Float,
+}
+
+impl Default for Buffered {
+    fn default() -> Self {
+        Self {
+            buffer: Vec::new(),
             zoom: Float::with_val(PRECISION, 0.0),
             x: Float::with_val(PRECISION, 0.0),
             y: Float::with_val(PRECISION, 0.0),
@@ -67,22 +137,20 @@ impl Default for Pipeline {
 
 fn mandelbrot_perturbation(
     orbit: &mut Vec<(f64, f64)>,
-    frame_buffer: &mut [Srgb],
+    frame_buffer: &mut [Sbgr],
     max_iteration: usize,
     zoom: &Float,
     x: &Float,
     y: &Float,
+    palette: &[Sbgr],
+    width: usize,
+    height: usize,
 ) {
     let cx = x;
     let cy = y;
 
-    let w = WIDTH as f64;
-    let h = HEIGHT as f64;
-
-    let scanline_width = WIDTH;
-    let scanline_height = HEIGHT / 80;
-    let scanline_len = scanline_width * scanline_height;
-    assert!(frame_buffer.len().is_multiple_of(scanline_len));
+    let w = width as f64;
+    let h = height as f64;
 
     // Perturbation reference orbit.
     orbit.clear();
@@ -107,28 +175,18 @@ fn mandelbrot_perturbation(
         x += x0;
     }
 
-    let xstep = (Float::with_val(PRECISION, MANDELBROT_XRANGE) * zoom / w).to_f64();
-    let ystep = (Float::with_val(PRECISION, MANDELBROT_YRANGE) * zoom / h).to_f64();
-    let sdx = (Float::with_val(PRECISION, -2.00) * zoom).to_f64();
-    let sdy = (Float::with_val(PRECISION, -1.12) * zoom).to_f64();
+    let aspect = w / h;
+    let z = zoom.to_f64();
+    let xstep = 2.0 * z * aspect / w;
+    let ystep = 2.0 * z / h;
+    let sdx = -z * aspect;
+    let sdy = -z;
+
     let (a, b, c, approx_iteration) =
         series_approximation_coefficients(orbit, sdx, sdy, xstep, ystep);
 
-    // println!("x: {}", cx.to_string_radix(10, Some(50)));
-    // println!("y: {}", cy.to_string_radix(10, Some(50)));
-    // println!("z: {}", zoom.to_string_radix(10, Some(50)));
-    // println!("i: {}", max_iteration);
-    //
-    // println!("a: {}", a);
-    // println!("b: {}", b);
-    // println!("c: {}", c);
-    //
-    // println!("approx: {}", approx_iteration);
-    // println!("orbit len: {}", orbit.len());
-    // println!();
-
     frame_buffer
-        .par_chunks_mut(HEIGHT)
+        .par_chunks_mut(height)
         .enumerate()
         .for_each(|(py, scanline_buffer)| {
             let dy0 = sdy + py as f64 * ystep;
@@ -196,34 +254,38 @@ fn mandelbrot_perturbation(
                     }
 
                     let (x, y) = orbit[ref_iteration];
-                    *pixel = iteration_to_srgb(iteration, x + dx, y + dy, max_iteration);
+                    *pixel = iteration_to_srgb(iteration, x + dx, y + dy, max_iteration, palette);
                 });
         });
 }
 
-fn mandelbrot(frame_buffer: &mut [Srgb], max_iteration: usize, zoom: &Float, x: &Float, y: &Float) {
-    // println!("x: {}", x.to_string_radix(10, Some(50)));
-    // println!("y: {}", y.to_string_radix(10, Some(50)));
-    // println!("z: {}", zoom.to_string_radix(10, Some(50)));
-    // println!("i: {}", max_iteration);
-    // println!();
-
+fn mandelbrot(
+    frame_buffer: &mut [Sbgr],
+    max_iteration: usize,
+    zoom: &Float,
+    x: &Float,
+    y: &Float,
+    palette: &[Sbgr],
+    width: usize,
+    height: usize,
+) {
     let zoom = zoom.to_f64();
     let cx = x.to_f64();
     let cy = y.to_f64();
-    let w = WIDTH as f64;
-    let h = HEIGHT as f64;
+    let w = width as f64;
+    let h = height as f64;
+    let aspect = w / h;
 
     frame_buffer
-        .par_chunks_mut(HEIGHT)
+        .par_chunks_mut(height)
         .enumerate()
         .for_each(|(py, scanline_buffer)| {
-            let y0 = ((py as f64) / h * MANDELBROT_YRANGE - 1.12) * zoom + cy;
+            let y0 = ((py as f64) / h * 2.0 - 1.0) * zoom + cy;
             scanline_buffer
                 .par_iter_mut()
                 .enumerate()
                 .for_each(|(px, pixel)| {
-                    let x0 = ((px as f64) / w * MANDELBROT_XRANGE - 2.00) * zoom + cx;
+                    let x0 = ((px as f64) / w * 2.0 - 1.0) * zoom * aspect + cx;
                     let mut x = 0f64;
                     let mut y = 0f64;
                     let mut iteration = 0;
@@ -238,46 +300,32 @@ fn mandelbrot(frame_buffer: &mut [Srgb], max_iteration: usize, zoom: &Float, x: 
                         x = unsafe { fadd_fast(fsub_fast(x2, y2), x0) };
                         iteration += 1;
                     }
-                    *pixel = iteration_to_srgb(iteration, x, y, max_iteration);
+                    *pixel = iteration_to_srgb(iteration, x, y, max_iteration, palette);
                 });
         });
 }
 
-// https://stackoverflow.com/a/16505538
-const MAPPING: [Srgb; 16] = [
-    Srgb::from_rgb(66, 30, 15),
-    Srgb::from_rgb(25, 7, 26),
-    Srgb::from_rgb(9, 1, 47),
-    Srgb::from_rgb(4, 4, 73),
-    Srgb::from_rgb(0, 7, 100),
-    Srgb::from_rgb(12, 44, 138),
-    Srgb::from_rgb(24, 82, 177),
-    Srgb::from_rgb(57, 125, 209),
-    Srgb::from_rgb(134, 181, 229),
-    Srgb::from_rgb(211, 236, 248),
-    Srgb::from_rgb(241, 233, 191),
-    Srgb::from_rgb(248, 201, 95),
-    Srgb::from_rgb(255, 170, 0),
-    Srgb::from_rgb(204, 128, 0),
-    Srgb::from_rgb(153, 87, 0),
-    Srgb::from_rgb(106, 52, 3),
-];
-
-fn iteration_to_srgb(iteration: usize, x: f64, y: f64, max_iteration: usize) -> Srgb {
+fn iteration_to_srgb(
+    iteration: usize,
+    x: f64,
+    y: f64,
+    max_iteration: usize,
+    palette: &[Sbgr],
+) -> Sbgr {
     if iteration == max_iteration {
-        return Srgb::from_rgb(0, 0, 0);
+        return Sbgr::from_rgb(0, 0, 0);
     }
 
     // https://en.wikipedia.org/wiki/Plotting_algorithms_for_the_Mandelbrot_set#Continuous_(smooth)_coloring
     let zn = x * x + y * y;
     let nu = (zn.ln() * 0.5).ln() / std::f64::consts::LN_2;
     let iter = iteration as f64 + 1.0 - nu;
-    let index = iter % 16.0;
+    let index = iter % palette.len() as f64;
     let c1 = index.floor() as usize;
-    let c2 = (c1 + 1) % 16;
+    let c2 = (c1 + 1) % palette.len();
     let t = index.fract() as f32;
 
-    let color1 = MAPPING[c1];
-    let color2 = MAPPING[c2];
-    (color1.to_linear() * (1.0 - t) + color2.to_linear() * t).to_srgb()
+    let color1 = palette[c1];
+    let color2 = palette[c2];
+    (color1.to_linear() * (1.0 - t) + color2.to_linear() * t).to_sbgr()
 }

@@ -2,6 +2,7 @@
 #![allow(internal_features)]
 #![feature(core_intrinsics)]
 
+pub mod palette;
 #[cfg(not(feature = "software"))]
 pub mod pipeline;
 #[cfg(feature = "software")]

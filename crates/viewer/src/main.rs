@@ -37,7 +37,7 @@ impl Default for Memory {
         Self {
             cursor_x: 0.0,
             cursor_y: 0.0,
-            zoom: Float::with_val(PRECISION, 1.0),
+            zoom: Float::with_val(PRECISION, 2.0),
             cx: Float::with_val(PRECISION, 0.0),
             cy: Float::with_val(PRECISION, 0.0),
             #[cfg(not(feature = "software"))]
@@ -85,15 +85,24 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
         _ => {}
     }
 
-    // Gemini slop
+    // Claude slop
     fn apply_zoom(memory: &mut Memory, zoom_delta: Float) {
-        let mouse_base_x =
-            (memory.cursor_x / compute::WIDTH as f64) * compute::MANDELBROT_XRANGE - 2.00;
-        let mouse_base_y =
-            (memory.cursor_y / compute::HEIGHT as f64) * compute::MANDELBROT_YRANGE - 1.12;
+        let w = compute::WIDTH as f64;
+        let h = compute::HEIGHT as f64;
+        let aspect = w / h;
 
+        // Convert cursor position to normalized coordinates [-1, 1] range
+        let norm_x = (memory.cursor_x / w) * 2.0 - 1.0;
+        let norm_y = (memory.cursor_y / h) * 2.0 - 1.0;
+
+        // Apply aspect ratio to x coordinate
+        let mouse_base_x = norm_x * aspect;
+        let mouse_base_y = norm_y;
+
+        // Update zoom
         memory.zoom.sub_assign_round(&zoom_delta, Round::Nearest);
 
+        // Update center position to zoom towards cursor
         let mouse_base_x = Float::with_val(PRECISION, mouse_base_x);
         let mouse_base_y = Float::with_val(PRECISION, mouse_base_y);
         memory
@@ -151,5 +160,8 @@ fn update_and_render(
         &memory.zoom,
         &memory.cx,
         &memory.cy,
+        &compute::palette::classic(),
+        compute::WIDTH,
+        compute::HEIGHT,
     );
 }
