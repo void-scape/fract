@@ -1,0 +1,12 @@
+[package]
+name = "viewer"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+software = ["glazer/software", "compute/software"]
+
+[dependencies]
+glazer = { path = "../../../blaze/crates/glazer", default-features = false }
+compute = { path = "../compute" }
+rug = { workspace = true }

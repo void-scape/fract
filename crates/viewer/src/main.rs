@@ -1,4 +1,4 @@
-use fract::PRECISION;
+use compute::PRECISION;
 use glazer::winit::{
     event::{DeviceEvent, ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
     keyboard::{KeyCode, PhysicalKey},
@@ -12,8 +12,8 @@ use rug::{
 fn main() {
     glazer::run(
         Memory::default(),
-        fract::WIDTH,
-        fract::HEIGHT,
+        compute::WIDTH,
+        compute::HEIGHT,
         handle_input,
         update_and_render,
         None,
@@ -26,7 +26,10 @@ struct Memory {
     cursor_y: f64,
     cx: Float,
     cy: Float,
-    pipeline: Option<fract::Pipeline>,
+    #[cfg(not(feature = "software"))]
+    pipeline: Option<compute::pipeline::Pipeline>,
+    #[cfg(feature = "software")]
+    pipeline: compute::software::Pipeline,
 }
 
 impl Default for Memory {
@@ -37,7 +40,10 @@ impl Default for Memory {
             zoom: Float::with_val(PRECISION, 1.0),
             cx: Float::with_val(PRECISION, 0.0),
             cy: Float::with_val(PRECISION, 0.0),
+            #[cfg(not(feature = "software"))]
             pipeline: None,
+            #[cfg(feature = "software")]
+            pipeline: compute::software::Pipeline::default(),
         }
     }
 }
@@ -69,7 +75,7 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
         glazer::Input::Device(DeviceEvent::MouseWheel { delta }) => match delta {
             MouseScrollDelta::PixelDelta(delta) => {
                 let delta = delta.y.signum() * (delta.x * delta.x + delta.y * delta.y).sqrt()
-                    / fract::HEIGHT as f64
+                    / compute::HEIGHT as f64
                     * 10.0;
                 let zoom_delta = Float::with_val(PRECISION, delta * &memory.zoom);
                 apply_zoom(memory, zoom_delta);
@@ -82,9 +88,9 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
     // Gemini slop
     fn apply_zoom(memory: &mut Memory, zoom_delta: Float) {
         let mouse_base_x =
-            (memory.cursor_x / fract::WIDTH as f64) * fract::MANDELBROT_XRANGE - 2.00;
+            (memory.cursor_x / compute::WIDTH as f64) * compute::MANDELBROT_XRANGE - 2.00;
         let mouse_base_y =
-            (memory.cursor_y / fract::HEIGHT as f64) * fract::MANDELBROT_YRANGE - 1.12;
+            (memory.cursor_y / compute::HEIGHT as f64) * compute::MANDELBROT_YRANGE - 1.12;
 
         memory.zoom.sub_assign_round(&zoom_delta, Round::Nearest);
 
@@ -101,23 +107,46 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
 
 fn update_and_render(
     glazer::PlatformUpdate {
+        window,
         memory,
+        #[cfg(feature = "software")]
+        frame_buffer,
         width,
         height,
-        window,
         ..
     }: glazer::PlatformUpdate<Memory>,
 ) {
-    assert_eq!(width, fract::WIDTH);
-    assert_eq!(height, fract::HEIGHT);
+    window.set_resizable(false);
+    window.set_title("Mandelbrot Set");
 
-    let max_iteration = fract::ITERATIONS;
+    assert_eq!(width, compute::WIDTH);
+    assert_eq!(height, compute::HEIGHT);
+
+    #[cfg(not(feature = "software"))]
+    let max_iteration = compute::pipeline::ITERATIONS;
+    #[cfg(feature = "software")]
+    let current_zoom_magnitude = -memory.zoom.to_f64().log10();
+    #[cfg(feature = "software")]
+    let max_iteration = (100.0 + 50.0 * current_zoom_magnitude.max(0.0)) as usize;
+
+    #[cfg(not(feature = "software"))]
     let pipeline = memory
         .pipeline
-        .get_or_insert_with(|| fract::create_pipeline(window));
+        .get_or_insert_with(|| compute::pipeline::create_pipeline(window));
 
-    fract::compute_mandelbrot(
+    #[cfg(not(feature = "software"))]
+    compute::pipeline::compute_mandelbrot(
         pipeline,
+        max_iteration,
+        &memory.zoom,
+        &memory.cx,
+        &memory.cy,
+    );
+
+    #[cfg(feature = "software")]
+    compute::software::compute_mandelbrot(
+        &mut memory.pipeline,
+        frame_buffer,
         max_iteration,
         &memory.zoom,
         &memory.cx,

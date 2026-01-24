@@ -1,0 +1,11 @@
+[package]
+name = "deep"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+compute = { path = "../compute", default-features = false, features = [
+	"software",
+] }
+tint = { path = "../../../blaze/crates/tint" }
+rug = { workspace = true }

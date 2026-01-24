@@ -2,7 +2,11 @@
 #![allow(internal_features)]
 #![feature(core_intrinsics)]
 
+#[cfg(not(feature = "software"))]
 pub mod pipeline;
+#[cfg(feature = "software")]
+pub mod software;
+#[cfg(not(feature = "software"))]
 pub use pipeline::*;
 
 pub const WIDTH: usize = 1600;
@@ -63,7 +67,7 @@ where
     push_point(0.0, h, sdx, sdy, xstep, ystep, &mut points, 2);
     push_point(w, h, sdx, sdy, xstep, ystep, &mut points, 3);
 
-    'outer: while approx_iteration < orbit.len() {
+    'outer: while approx_iteration < orbit.len().saturating_sub(2) {
         let (re, im) = orbit[approx_iteration];
         let x = num::Complex::new(re.into(), im.into());
         let x2 = x * 2.0;

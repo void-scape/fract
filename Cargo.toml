@@ -1,16 +1,9 @@
-[package]
-name = "fract"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+resolver = "3"
+members = ["crates/compute", "crates/viewer", "crates/deep"]
 
-[dependencies]
-glazer = { path = "../blaze/crates/glazer", default-features = false }
-rast = { path = "../blaze/crates/rast" }
+[workspace.dependencies]
 rug = { version = "1.28.1", default-features = false, features = [
 	"float",
 	"std",
 ] }
-num = "0.4.3"
-env_logger = "0.11.8"
-pollster = "0.4.0"
-wgpu = "28.0.0"
