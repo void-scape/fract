@@ -398,13 +398,13 @@ name = "compute"
 version = "0.1.0"
 dependencies = [
  "env_logger",
+ "glazer",
  "num",
  "pollster",
  "rayon",
  "rug",
  "tint",
  "wgpu",
- "winit",
 ]
 
 [[package]]

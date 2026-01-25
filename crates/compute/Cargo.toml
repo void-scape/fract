@@ -12,7 +12,8 @@ num = "0.4.3"
 env_logger = "0.11.8"
 pollster = "0.4.0"
 wgpu = "28.0.0"
-winit = { version = "0.30", default-features = false, features = ["rwh_06"] }
+# just need the window but this reduces the features in winit lol
+glazer = { path = "../../../blaze/crates/glazer", default-features = false }
 
 # software
 rayon = "1.11.0"

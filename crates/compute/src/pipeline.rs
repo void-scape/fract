@@ -1,9 +1,9 @@
 use crate::PRECISION;
+use glazer::winit::window::Window;
 use rug::{
     Assign, Float,
     ops::{CompleteRound, Pow},
 };
-use winit::window::Window;
 
 pub const ITERATIONS: usize = 100;
 
