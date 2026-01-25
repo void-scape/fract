@@ -60,6 +60,7 @@ pub fn compute_mandelbrot(
                 palette,
                 width,
                 height,
+                pipeline.super_sampled,
             );
         }
 
@@ -91,6 +92,7 @@ pub fn compute_mandelbrot(
                 palette,
                 width,
                 height,
+                pipeline.super_sampled,
             );
         }
     }
@@ -212,7 +214,6 @@ fn mandelbrot_perturbation(
                         let mut p2 = LinearRgb::default();
                         let mut p3 = LinearRgb::default();
                         let mut p4 = LinearRgb::default();
-
                         for (pixel, px, py) in [
                             (&mut p1, px + 0.25, py + 0.25),
                             (&mut p2, px + 0.75, py + 0.25),
@@ -221,85 +222,20 @@ fn mandelbrot_perturbation(
                         ] {
                             let dx0 = sdx + px * xstep;
                             let dy0 = sdy + py * ystep;
-
-                            // Compute the delta of (x0, y0) with respect to the
-                            // reference orbit.
-                            let mut dx = dx0;
-                            let mut dy = dy0;
-                            let mut iteration = 0;
-                            let mut ref_iteration = 0;
-
-                            // If there are coefficients present, approximate the position
-                            // of (dx, dy) at iteration `approx_iteration`.
-                            if approx_iteration > 0 {
-                                // D = Ad = Bd^2 + Cd^3
-                                let d = num::Complex::new(dx0, dy0);
-                                let d2 = d * d;
-                                let d3 = d2 * d;
-                                let dd = a * d + b * d2 + c * d3;
-                                dx = dd.re;
-                                dy = dd.im;
-                                iteration = approx_iteration;
-                                ref_iteration = approx_iteration;
-                            }
-
-                            while iteration < max_iteration {
-                                let (mut ax, mut ay) = orbit[ref_iteration];
-                                ax *= 2.0;
-                                ay *= 2.0;
-
-                                // ad = a * d
-                                let adx = ax * dx - ay * dy;
-                                let ady = ax * dy + ay * dx;
-
-                                // a = a * d + d * d
-                                ax = adx + dx * dx - dy * dy;
-                                ay = ady + dx * dy + dy * dx;
-
-                                // d = a * d + d * d + d0
-                                dx = ax + dx0;
-                                dy = ay + dy0;
-
-                                ref_iteration += 1;
-
-                                // The full value of (x0, y0) is reconstructed from
-                                // the reference orbit and checked for escape time.
-                                let (x, y) = orbit[ref_iteration];
-                                let zmag = (dx + x) * (dx + x) + (dy + y) * (dy + y);
-                                let dmag = dx * dx + dy * dy;
-
-                                if zmag > 10000.0 {
-                                    break;
-                                } else if zmag < dmag || ref_iteration == orbit.len() - 1 {
-                                    dx += x;
-                                    dy += y;
-                                    ref_iteration = 0;
-                                }
-
-                                iteration += 1;
-                            }
-
-                            let (x, y) = orbit[ref_iteration];
-                            *pixel = iteration_to_srgb(
-                                iteration,
-                                x + dx,
-                                y + dy,
+                            *pixel = pixel_color(
+                                dx0,
+                                dy0,
                                 max_iteration,
                                 palette,
+                                orbit,
+                                approx_iteration,
+                                a,
+                                b,
+                                c,
                             )
                             .to_linear();
                         }
-
-                        let [r1, g1, b1, _] = p1.to_array();
-                        let [r2, g2, b2, _] = p2.to_array();
-                        let [r3, g3, b3, _] = p3.to_array();
-                        let [r4, g4, b4, _] = p4.to_array();
-                        *pixel = LinearRgb::from_rgb(
-                            (r1 + r2 + r3 + r4) / 4.0,
-                            (g1 + g2 + g3 + g4) / 4.0,
-                            (b1 + b2 + b3 + b4) / 4.0,
-                        )
-                        .to_sbgr();
+                        *pixel = super_sample(p1, p2, p3, p4);
                     });
             });
     } else {
@@ -313,69 +249,91 @@ fn mandelbrot_perturbation(
                     .enumerate()
                     .for_each(|(px, pixel)| {
                         let dx0 = sdx + px as f64 * xstep;
-
-                        // Compute the delta of (x0, y0) with respect to the
-                        // reference orbit.
-                        let mut dx = dx0;
-                        let mut dy = dy0;
-                        let mut iteration = 0;
-                        let mut ref_iteration = 0;
-
-                        // If there are coefficients present, approximate the position
-                        // of (dx, dy) at iteration `approx_iteration`.
-                        if approx_iteration > 0 {
-                            // D = Ad = Bd^2 + Cd^3
-                            let d = num::Complex::new(dx0, dy0);
-                            let d2 = d * d;
-                            let d3 = d2 * d;
-                            let dd = a * d + b * d2 + c * d3;
-                            dx = dd.re;
-                            dy = dd.im;
-                            iteration = approx_iteration;
-                            ref_iteration = approx_iteration;
-                        }
-
-                        while iteration < max_iteration {
-                            let (mut ax, mut ay) = orbit[ref_iteration];
-                            ax *= 2.0;
-                            ay *= 2.0;
-
-                            // ad = a * d
-                            let adx = ax * dx - ay * dy;
-                            let ady = ax * dy + ay * dx;
-
-                            // a = a * d + d * d
-                            ax = adx + dx * dx - dy * dy;
-                            ay = ady + dx * dy + dy * dx;
-
-                            // d = a * d + d * d + d0
-                            dx = ax + dx0;
-                            dy = ay + dy0;
-
-                            ref_iteration += 1;
-
-                            // The full value of (x0, y0) is reconstructed from
-                            // the reference orbit and checked for escape time.
-                            let (x, y) = orbit[ref_iteration];
-                            let zmag = (dx + x) * (dx + x) + (dy + y) * (dy + y);
-                            let dmag = dx * dx + dy * dy;
-
-                            if zmag > 10000.0 {
-                                break;
-                            } else if zmag < dmag || ref_iteration == orbit.len() - 1 {
-                                dx += x;
-                                dy += y;
-                                ref_iteration = 0;
-                            }
-
-                            iteration += 1;
-                        }
-
-                        let (x, y) = orbit[ref_iteration];
-                        *pixel =
-                            iteration_to_srgb(iteration, x + dx, y + dy, max_iteration, palette);
+                        *pixel = pixel_color(
+                            dx0,
+                            dy0,
+                            max_iteration,
+                            palette,
+                            orbit,
+                            approx_iteration,
+                            a,
+                            b,
+                            c,
+                        );
                     });
             });
+    }
+
+    fn pixel_color(
+        dx0: f64,
+        dy0: f64,
+        max_iteration: usize,
+        palette: &[Sbgr],
+        orbit: &[(f64, f64)],
+        approx_iteration: usize,
+        a: num::Complex<f64>,
+        b: num::Complex<f64>,
+        c: num::Complex<f64>,
+    ) -> Sbgr {
+        // Compute the delta of (x0, y0) with respect to the
+        // reference orbit.
+        let mut dx = dx0;
+        let mut dy = dy0;
+        let mut iteration = 0;
+        let mut ref_iteration = 0;
+
+        // If there are coefficients present, approximate the position
+        // of (dx, dy) at iteration `approx_iteration`.
+        if approx_iteration > 0 {
+            // D = Ad = Bd^2 + Cd^3
+            let d = num::Complex::new(dx0, dy0);
+            let d2 = d * d;
+            let d3 = d2 * d;
+            let dd = a * d + b * d2 + c * d3;
+            dx = dd.re;
+            dy = dd.im;
+            iteration = approx_iteration;
+            ref_iteration = approx_iteration;
+        }
+
+        while iteration < max_iteration {
+            let (mut ax, mut ay) = orbit[ref_iteration];
+            ax *= 2.0;
+            ay *= 2.0;
+
+            // ad = a * d
+            let adx = ax * dx - ay * dy;
+            let ady = ax * dy + ay * dx;
+
+            // a = a * d + d * d
+            ax = adx + dx * dx - dy * dy;
+            ay = ady + dx * dy + dy * dx;
+
+            // d = a * d + d * d + d0
+            dx = ax + dx0;
+            dy = ay + dy0;
+
+            ref_iteration += 1;
+
+            // The full value of (x0, y0) is reconstructed from
+            // the reference orbit and checked for escape time.
+            let (x, y) = orbit[ref_iteration];
+            let zmag = (dx + x) * (dx + x) + (dy + y) * (dy + y);
+            let dmag = dx * dx + dy * dy;
+
+            if zmag > 10000.0 {
+                break;
+            } else if zmag < dmag || ref_iteration == orbit.len() - 1 {
+                dx += x;
+                dy += y;
+                ref_iteration = 0;
+            }
+
+            iteration += 1;
+        }
+
+        let (x, y) = orbit[ref_iteration];
+        iteration_to_srgb(iteration, x + dx, y + dy, max_iteration, palette)
     }
 }
 
@@ -388,6 +346,7 @@ fn mandelbrot(
     palette: &[Sbgr],
     width: usize,
     height: usize,
+    super_sampled: bool,
 ) {
     let zoom = zoom.to_f64();
     let cx = x.to_f64();
@@ -396,33 +355,68 @@ fn mandelbrot(
     let h = height as f64;
     let aspect = w / h;
 
-    frame_buffer
-        .par_chunks_mut(height)
-        .enumerate()
-        .for_each(|(py, scanline_buffer)| {
-            let y0 = ((py as f64) / h * 2.0 - 1.0) * zoom + cy;
-            scanline_buffer
-                .par_iter_mut()
-                .enumerate()
-                .for_each(|(px, pixel)| {
-                    let x0 = ((px as f64) / w * 2.0 - 1.0) * zoom * aspect + cx;
-                    let mut x = 0f64;
-                    let mut y = 0f64;
-                    let mut iteration = 0;
-                    while iteration < max_iteration {
-                        use std::intrinsics::*;
-                        let x2 = unsafe { fmul_fast(x, x) };
-                        let y2 = unsafe { fmul_fast(y, y) };
-                        if unsafe { fadd_fast(x2, y2) } > 10000.0 {
-                            break;
+    if super_sampled {
+        frame_buffer
+            .par_chunks_mut(height)
+            .enumerate()
+            .for_each(|(py, scanline_buffer)| {
+                scanline_buffer
+                    .par_iter_mut()
+                    .enumerate()
+                    .for_each(|(px, pixel)| {
+                        let px = px as f64;
+                        let py = py as f64;
+
+                        let mut p1 = LinearRgb::default();
+                        let mut p2 = LinearRgb::default();
+                        let mut p3 = LinearRgb::default();
+                        let mut p4 = LinearRgb::default();
+                        for (pixel, px, py) in [
+                            (&mut p1, px + 0.25, py + 0.25),
+                            (&mut p2, px + 0.75, py + 0.25),
+                            (&mut p3, px + 0.25, py + 0.75),
+                            (&mut p4, px + 0.75, py + 0.75),
+                        ] {
+                            let x0 = (px / w * 2.0 - 1.0) * zoom * aspect + cx;
+                            let y0 = (py / h * 2.0 - 1.0) * zoom + cy;
+                            *pixel = pixel_color(x0, y0, max_iteration, palette).to_linear();
                         }
-                        y = unsafe { fadd_fast(fmul_fast(fmul_fast(2.0, x), y), y0) };
-                        x = unsafe { fadd_fast(fsub_fast(x2, y2), x0) };
-                        iteration += 1;
-                    }
-                    *pixel = iteration_to_srgb(iteration, x, y, max_iteration, palette);
-                });
-        });
+                        *pixel = super_sample(p1, p2, p3, p4);
+                    });
+            });
+    } else {
+        frame_buffer
+            .par_chunks_mut(height)
+            .enumerate()
+            .for_each(|(py, scanline_buffer)| {
+                let y0 = ((py as f64) / h * 2.0 - 1.0) * zoom + cy;
+                scanline_buffer
+                    .par_iter_mut()
+                    .enumerate()
+                    .for_each(|(px, pixel)| {
+                        let x0 = ((px as f64) / w * 2.0 - 1.0) * zoom * aspect + cx;
+                        *pixel = pixel_color(x0, y0, max_iteration, palette);
+                    });
+            });
+    }
+
+    fn pixel_color(x0: f64, y0: f64, max_iteration: usize, palette: &[Sbgr]) -> Sbgr {
+        let mut x = 0f64;
+        let mut y = 0f64;
+        let mut iteration = 0;
+        while iteration < max_iteration {
+            use std::intrinsics::*;
+            let x2 = unsafe { fmul_fast(x, x) };
+            let y2 = unsafe { fmul_fast(y, y) };
+            if unsafe { fadd_fast(x2, y2) } > 10000.0 {
+                break;
+            }
+            y = unsafe { fadd_fast(fmul_fast(fmul_fast(2.0, x), y), y0) };
+            x = unsafe { fadd_fast(fsub_fast(x2, y2), x0) };
+            iteration += 1;
+        }
+        iteration_to_srgb(iteration, x, y, max_iteration, palette)
+    }
 }
 
 fn iteration_to_srgb(
@@ -448,4 +442,17 @@ fn iteration_to_srgb(
     let color1 = palette[c1];
     let color2 = palette[c2];
     (color1.to_linear() * (1.0 - t) + color2.to_linear() * t).to_sbgr()
+}
+
+fn super_sample(p1: LinearRgb, p2: LinearRgb, p3: LinearRgb, p4: LinearRgb) -> Sbgr {
+    let [r1, g1, b1, _] = p1.to_array();
+    let [r2, g2, b2, _] = p2.to_array();
+    let [r3, g3, b3, _] = p3.to_array();
+    let [r4, g4, b4, _] = p4.to_array();
+    LinearRgb::from_rgb(
+        (r1 + r2 + r3 + r4) / 4.0,
+        (g1 + g2 + g3 + g4) / 4.0,
+        (b1 + b2 + b3 + b4) / 4.0,
+    )
+    .to_sbgr()
 }
