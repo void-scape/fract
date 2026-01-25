@@ -6,10 +6,16 @@ use rug::{
 };
 use std::{process::ExitCode, time::UNIX_EPOCH};
 
+mod viewer;
+
 /// Deep Mandelbrot set renderer.
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
+    /// Run the interactive viewer.
+    #[arg(short, long, default_value_t = false)]
+    viewer: bool,
+
     /// Number of frames to render.
     #[arg(short, long, default_value_t = 1)]
     frames: usize,
@@ -23,7 +29,7 @@ struct Args {
     config: Option<String>,
 
     /// Output file, either `PNG` or `MP4`.
-    output: String,
+    output: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -52,29 +58,8 @@ impl Default for Config {
 }
 
 fn main() -> std::io::Result<ExitCode> {
-    let args = Args::parse();
-
-    if !args.output.ends_with(".png") && !args.output.ends_with(".mp4") {
-        println!("Supported output files types are PNG and MP4");
-        return Ok(ExitCode::FAILURE);
-    }
-
-    if args.frames == 0 {
-        println!("Frames must be greater than 0");
-        return Ok(ExitCode::FAILURE);
-    }
-
-    if args.frames == 1 && !args.output.to_lowercase().ends_with(".png") {
-        println!("Invalid file type for image output, expected PNG");
-        return Ok(ExitCode::FAILURE);
-    }
-
-    if args.frames > 1 && !args.output.to_lowercase().ends_with(".mp4") {
-        println!("Invalid file type for video output, expected MP4");
-        return Ok(ExitCode::FAILURE);
-    }
-
-    let config = if let Some(path) = args.config {
+    let mut args = Args::parse();
+    let config = if let Some(path) = &args.config {
         match toml::from_str(&std::fs::read_to_string(path)?) {
             Ok(config) => config,
             Err(err) => {
@@ -86,9 +71,13 @@ fn main() -> std::io::Result<ExitCode> {
         Config::default()
     };
 
+    if let Some(path) = args.output.take() {
+        output(&args, &path, &config)?;
+    }
+
     let x = Float::parse(config.x).unwrap().complete(PRECISION);
     let y = Float::parse(config.y).unwrap().complete(PRECISION);
-    let mut z = Float::parse(config.zoom).unwrap().complete(PRECISION);
+    let z = Float::parse(config.zoom).unwrap().complete(PRECISION);
     let iterations = config.iterations;
     let width = config.width;
     let height = config.height;
@@ -102,59 +91,91 @@ fn main() -> std::io::Result<ExitCode> {
         }
     };
 
-    let mut pipeline = compute::software::Pipeline::unbuffered().super_sampled();
-    let mut frame_buffer = vec![tint::Sbgr::default(); width * height];
+    if args.viewer {
+        viewer::run(viewer::Memory {
+            zoom: z,
+            cursor_x: 0.0,
+            cursor_y: 0.0,
+            cx: Float::with_val(PRECISION, x),
+            cy: Float::with_val(PRECISION, y),
+            iterations,
+            width,
+            height,
+            palette,
+            pipeline: None,
+        });
+    }
+
+    Ok(ExitCode::SUCCESS)
+}
+
+fn output(args: &Args, output: &str, config: &Config) -> std::io::Result<ExitCode> {
+    if !output.ends_with(".png") && !output.ends_with(".mp4") {
+        println!("Supported output files types are PNG and MP4");
+        return Ok(ExitCode::FAILURE);
+    }
+
+    if args.frames == 0 {
+        println!("Frames must be greater than 0");
+        return Ok(ExitCode::FAILURE);
+    }
+
+    if args.frames == 1 && !output.to_lowercase().ends_with(".png") {
+        println!("Invalid file type for image output, expected PNG");
+        return Ok(ExitCode::FAILURE);
+    }
+
+    if args.frames > 1 && !output.to_lowercase().ends_with(".mp4") {
+        println!("Invalid file type for video output, expected MP4");
+        return Ok(ExitCode::FAILURE);
+    }
+
+    let x = Float::parse(&config.x).unwrap().complete(PRECISION);
+    let y = Float::parse(&config.y).unwrap().complete(PRECISION);
+    let mut z = Float::parse(&config.zoom).unwrap().complete(PRECISION);
+    let iterations = config.iterations;
+    let width = config.width;
+    let height = config.height;
+    let palette = match &*config.palette {
+        "classic" => compute::palette::classic().to_vec(),
+        "lava" => compute::palette::lava().to_vec(),
+        "ocean" => compute::palette::ocean().to_vec(),
+        _ => {
+            println!("Unknown palette: {}", config.palette);
+            return Ok(ExitCode::FAILURE);
+        }
+    };
+
+    let mut pipeline = compute::pipeline::create_pipeline(None, &palette, width, height);
     let fps = 30;
 
     if args.frames == 1 {
         time(0, || {
-            compute::software::compute_mandelbrot(
-                &mut pipeline,
-                &mut frame_buffer,
-                iterations,
-                &z,
-                &x,
-                &y,
-                &palette,
-                width,
-                height,
-            );
-            let frame_buffer = unsafe {
-                std::slice::from_raw_parts(frame_buffer.as_ptr().cast(), frame_buffer.len() * 4)
-            };
-            png(&args.output, frame_buffer, width, height)
+            compute::pipeline::compute_mandelbrot(&mut pipeline, iterations, &z, &x, &y);
+            let pixels = compute::pipeline::frame_pixel_bytes(&mut pipeline);
+            png(output, &pixels, width, height)
         })?;
-        return Ok(ExitCode::SUCCESS);
+    } else {
+        let sample_rate = 48000usize;
+        assert!(sample_rate.is_multiple_of(fps));
+        let samples = vec![(0.0, 0.0); sample_rate / fps];
+
+        use indicatif::ProgressBar;
+        let bar = ProgressBar::new(args.frames as u64);
+
+        let mut encoder = Encoder::new(width, height, fps, sample_rate)?;
+        for _ in 0..args.frames {
+            compute::pipeline::compute_mandelbrot(&mut pipeline, iterations, &z, &x, &y);
+            let pixels = compute::pipeline::frame_pixel_bytes(&mut pipeline);
+            let zoom_delta = Float::with_val(PRECISION, &z * args.zoom);
+            z.add_assign_round(zoom_delta, rug::float::Round::Nearest);
+            encoder.render_frame(&pixels, &samples)?;
+            bar.inc(1);
+        }
+
+        bar.finish();
+        encoder.finish(output)?;
     }
-
-    let sample_rate = 48000usize;
-    assert!(sample_rate.is_multiple_of(fps));
-    let samples = vec![(0.0, 0.0); sample_rate / fps];
-
-    use indicatif::ProgressBar;
-    let bar = ProgressBar::new(args.frames as u64);
-
-    let mut encoder = Encoder::new(width, height, fps, sample_rate)?;
-    for _ in 0..args.frames {
-        compute::software::compute_mandelbrot(
-            &mut pipeline,
-            &mut frame_buffer,
-            iterations,
-            &z,
-            &x,
-            &y,
-            &palette,
-            width,
-            height,
-        );
-        let zoom_delta = Float::with_val(PRECISION, &z * args.zoom);
-        z.add_assign_round(zoom_delta, rug::float::Round::Nearest);
-        encoder.render_frame(&frame_buffer, &samples)?;
-        bar.inc(1);
-    }
-
-    bar.finish();
-    encoder.finish(&args.output)?;
 
     Ok(ExitCode::SUCCESS)
 }
@@ -190,18 +211,10 @@ impl Encoder {
         })
     }
 
-    fn render_frame<T>(
-        &mut self,
-        frame_buffer: &[T],
-        samples: &[(f32, f32)],
-    ) -> std::io::Result<()> {
-        assert_eq!(std::mem::size_of::<T>(), 4);
+    fn render_frame(&mut self, frame_buffer: &[u8], samples: &[(f32, f32)]) -> std::io::Result<()> {
         assert_eq!(samples.len(), self.sample_rate / self.fps);
-        assert_eq!(frame_buffer.len(), self.width * self.height);
+        assert_eq!(frame_buffer.len() / 4, self.width * self.height);
         let output = format!("{}/frames/{}.png", self.root, self.frame_count);
-        let frame_buffer = unsafe {
-            std::slice::from_raw_parts(frame_buffer.as_ptr().cast(), frame_buffer.len() * 4)
-        };
         png(&output, frame_buffer, self.width, self.height)?;
         pcm(&mut self.audio_stream, samples)?;
         self.frame_count += 1;

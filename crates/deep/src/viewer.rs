@@ -8,44 +8,32 @@ use rug::{
     float::Round,
     ops::{AddAssignRound, MulAssignRound, SubAssignRound},
 };
+use tint::Sbgr;
 
-pub const WIDTH: usize = 1600;
-pub const HEIGHT: usize = 1600;
-
-fn main() {
-    glazer::run(
-        Memory::default(),
-        WIDTH,
-        HEIGHT,
-        handle_input,
-        update_and_render,
-        None,
-    )
+pub fn run(memory: Memory) {
+    let width = memory.width;
+    let height = memory.height;
+    glazer::run(memory, width, height, handle_input, update_and_render, None);
 }
 
-struct Memory {
-    zoom: Float,
-    cursor_x: f64,
-    cursor_y: f64,
-    cx: Float,
-    cy: Float,
-    pipeline: Option<compute::pipeline::Pipeline>,
-}
-
-impl Default for Memory {
-    fn default() -> Self {
-        Self {
-            cursor_x: 0.0,
-            cursor_y: 0.0,
-            zoom: Float::with_val(PRECISION, 2.0),
-            cx: Float::with_val(PRECISION, 0.0),
-            cy: Float::with_val(PRECISION, 0.0),
-            pipeline: None,
-        }
-    }
+pub struct Memory {
+    pub zoom: Float,
+    pub cursor_x: f64,
+    pub cursor_y: f64,
+    pub cx: Float,
+    pub cy: Float,
+    pub iterations: usize,
+    pub width: usize,
+    pub height: usize,
+    pub palette: Vec<Sbgr>,
+    pub pipeline: Option<compute::pipeline::Pipeline>,
 }
 
 fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInput<Memory>) {
+    let w = memory.width as f64;
+    let h = memory.height as f64;
+    let aspect = w / h;
+
     match input {
         glazer::Input::Window(WindowEvent::KeyboardInput {
             event:
@@ -78,12 +66,8 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
                 _ => return,
             };
 
-            let w = WIDTH as f64;
-            let h = HEIGHT as f64;
-            let aspect = w / h;
-
             let dx = ((memory.cursor_x / w) * 2.0 - 1.0) * aspect * zs;
-            let dy = ((memory.cursor_y / h) * 2.0 - 1.0) * zs;
+            let dy = ((memory.cursor_y / h) * 2.0 - 1.0) * -zs;
             let dcx = Float::with_val(PRECISION, &memory.zoom * dx);
             let dcy = Float::with_val(PRECISION, &memory.zoom * dy);
             memory.cx.add_assign_round(dcx, Round::Nearest);
@@ -92,17 +76,12 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
         }
         glazer::Input::Device(DeviceEvent::MouseWheel { delta }) => match delta {
             MouseScrollDelta::PixelDelta(delta) => {
-                let delta = delta.y.signum() * (delta.x * delta.x + delta.y * delta.y).sqrt()
-                    / HEIGHT as f64
-                    * 10.0;
+                let delta =
+                    delta.y.signum() * (delta.x * delta.x + delta.y * delta.y).sqrt() / h * 10.0;
                 let zd = Float::with_val(PRECISION, delta * &memory.zoom);
 
-                let w = WIDTH as f64;
-                let h = HEIGHT as f64;
-                let aspect = w / h;
-
                 let dx = Float::with_val(PRECISION, ((memory.cursor_x / w) * 2.0 - 1.0) * aspect);
-                let dy = Float::with_val(PRECISION, (memory.cursor_y / h) * 2.0 - 1.0);
+                let dy = Float::with_val(PRECISION, ((memory.cursor_y / h) * 2.0 - 1.0) * -1.0);
                 memory.cx.add_assign_round(&dx * &zd, Round::Nearest);
                 memory.cy.add_assign_round(&dy * &zd, Round::Nearest);
                 memory.zoom.sub_assign_round(&zd, Round::Nearest);
@@ -114,22 +93,24 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
 }
 
 fn update_and_render(
-    glazer::PlatformUpdate {
-        window,
-        memory,
-        width,
-        height,
-        ..
-    }: glazer::PlatformUpdate<Memory>,
+    glazer::PlatformUpdate { window, memory, .. }: glazer::PlatformUpdate<Memory>,
 ) {
     window.set_resizable(false);
     window.set_title("Mandelbrot Set");
 
-    assert_eq!(width, WIDTH);
-    assert_eq!(height, HEIGHT);
-
     let pipeline = memory.pipeline.get_or_insert_with(|| {
-        compute::pipeline::create_pipeline(Some(window), &compute::palette::lava(), WIDTH, HEIGHT)
+        compute::pipeline::create_pipeline(
+            Some(window),
+            &memory.palette,
+            memory.width,
+            memory.height,
+        )
     });
-    compute::pipeline::compute_mandelbrot(pipeline, 1000, &memory.zoom, &memory.cx, &memory.cy);
+    compute::pipeline::compute_mandelbrot(
+        pipeline,
+        memory.iterations,
+        &memory.zoom,
+        &memory.cx,
+        &memory.cy,
+    );
 }

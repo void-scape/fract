@@ -2,11 +2,9 @@ struct MandelbrotUniform {
     width: u32,
     height: u32,
     max_iteration: u32,
-	orbit_len: u32,
-	zoom: f32,
-	cx: f32,
-	cy: f32,
-	q: i32,
+    orbit_len: u32,
+    zoom: f32,
+    q: i32,
 }
 
 struct OrbitDelta {
@@ -19,28 +17,21 @@ struct OrbitDelta {
 @group(0) @binding(0) var<uniform> args: MandelbrotUniform;
 @group(0) @binding(1) var<storage, read> orbit: array<OrbitDelta>;
 
+struct VertexInput {
+    @location(0) position: vec2<f32>,
+}
+
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) delta: vec2<f32>,
 }
 
-override SWAP_CHANNELS: bool = false;
-
 @vertex
-fn vs_main(@builtin(vertex_index) id: u32) -> VertexOutput {
-    var pos = array<vec2<f32>, 3>(
-        vec2<f32>(-1.0, -1.0),
-        vec2<f32>( 3.0, -1.0),
-        vec2<f32>(-1.0,  3.0)
-    );
-	var uv = array<vec2<f32>, 3>(
-        vec2<f32>(0.0, 0.0) - 0.5,
-        vec2<f32>(2.0, 0.0) - 0.5,
-        vec2<f32>(0.0, 2.0) - 0.5,
-    );
+fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    out.clip_position = vec4<f32>(pos[id], 0.0, 1.0);
-    out.delta = vec2(uv[id].x * f32(args.width) / f32(args.height), -uv[id].y);
+    let aspect = f32(args.width) / f32(args.height);
+    out.clip_position = vec4<f32>(in.position.x, in.position.y, 0.0, 1.0);
+    out.delta = vec2(in.position.x * aspect, in.position.y) * args.zoom * 2.0;
     return out;
 }
 
@@ -121,4 +112,23 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 	let fx = x * pow(2.0, f32(orbit[k].exponent)) + S * dx;
 	let fy = y * pow(2.0, f32(orbit[k].exponent)) + S * dy;
  	return iteration_to_rgb(u32(j), fx, fy);
+}
+
+@group(0) @binding(2) var palette: texture_2d<f32>;
+@group(0) @binding(3) var palette_sampler: sampler;
+override SWAP_CHANNELS: bool = false;
+
+fn iteration_to_rgb(iteration: u32, x: f32, y: f32) -> vec4<f32> {
+    if (iteration == args.max_iteration) {
+        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    }
+
+	// https://en.wikipedia.org/wiki/Plotting_algorithms_for_the_Mandelbrot_set#Continuous_(smooth)_coloring
+    let zn = dot(vec2(x, y), vec2(x, y));
+    let nu = log2(log2(zn) * 0.5);
+    let iter = f32(iteration) + 1.0 - nu;
+
+	let uv = vec2<f32>(iter / 24.0, 0.5);
+	let rgb = textureSample(palette, palette_sampler, uv).rgb;
+    return vec4<f32>(select(rgb.bgr, rgb, SWAP_CHANNELS), 1.0);
 }

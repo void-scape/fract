@@ -6,12 +6,10 @@ pub mod palette;
 pub mod pipeline;
 pub mod software;
 
-pub const WIDTH: usize = 1600;
-pub const HEIGHT: usize = 1600;
-pub const PRECISION: u32 = 1024;
-
 use rug::Complex;
 use rug::Float;
+
+pub const PRECISION: u32 = 1024;
 
 /// Compute the series approximation coefficients for a given reference `orbit`.
 ///

@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 compute = { path = "../compute" }
+glazer = { path = "../../../blaze/crates/glazer", default-features = false }
 tint = { path = "../../../blaze/crates/tint" }
 rug = { workspace = true }
 clap = { version = "4.5.54", features = ["derive"] }

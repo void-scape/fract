@@ -601,6 +601,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "compute",
+ "glazer",
  "indicatif",
  "png",
  "rug",
