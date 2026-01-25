@@ -200,7 +200,7 @@ fn mandelbrot_perturbation(
 
     if super_sampled {
         frame_buffer
-            .par_chunks_mut(height)
+            .par_chunks_mut(width)
             .enumerate()
             .for_each(|(py, scanline_buffer)| {
                 scanline_buffer
@@ -240,7 +240,7 @@ fn mandelbrot_perturbation(
             });
     } else {
         frame_buffer
-            .par_chunks_mut(height)
+            .par_chunks_mut(width)
             .enumerate()
             .for_each(|(py, scanline_buffer)| {
                 let dy0 = sdy + py as f64 * ystep;
@@ -357,7 +357,7 @@ fn mandelbrot(
 
     if super_sampled {
         frame_buffer
-            .par_chunks_mut(height)
+            .par_chunks_mut(width)
             .enumerate()
             .for_each(|(py, scanline_buffer)| {
                 scanline_buffer
@@ -386,7 +386,7 @@ fn mandelbrot(
             });
     } else {
         frame_buffer
-            .par_chunks_mut(height)
+            .par_chunks_mut(width)
             .enumerate()
             .for_each(|(py, scanline_buffer)| {
                 let y0 = ((py as f64) / h * 2.0 - 1.0) * zoom + cy;
