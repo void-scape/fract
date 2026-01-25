@@ -19,7 +19,7 @@ struct Args {
     frames: usize,
 
     /// Factor added to the zoom every frame.
-    #[arg(short, long, default_value_t = 0.001)]
+    #[arg(short, long, default_value_t = -0.05)]
     zoom: f32,
 
     /// Path to a config toml.

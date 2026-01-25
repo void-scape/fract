@@ -59,7 +59,7 @@ pub fn create_pipeline(
         std::mem::transmute::<Option<wgpu::Surface<'_>>, Option<wgpu::Surface<'static>>>(surface)
     };
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::default(),
+        power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: surface.as_ref(),
         force_fallback_adapter: false,
     }))
