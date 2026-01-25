@@ -291,9 +291,9 @@ fn mandelbrot_perturbation(
                         }
 
                         let [r1, g1, b1, _] = p1.to_array();
-                        let [r2, g2, b2, _] = p1.to_array();
-                        let [r3, g3, b3, _] = p1.to_array();
-                        let [r4, g4, b4, _] = p1.to_array();
+                        let [r2, g2, b2, _] = p2.to_array();
+                        let [r3, g3, b3, _] = p3.to_array();
+                        let [r4, g4, b4, _] = p4.to_array();
                         *pixel = LinearRgb::from_rgb(
                             (r1 + r2 + r3 + r4) / 4.0,
                             (g1 + g2 + g3 + g4) / 4.0,
