@@ -157,9 +157,9 @@ fn output(args: &Args, output: &str, config: &Config) -> std::io::Result<ExitCod
 
     if args.frames == 1 {
         log.write_all(b"[FRAME] 0\n")?;
-        log.write_all(format!("x = \"{x}\"\n").as_bytes())?;
-        log.write_all(format!("y = \"{y}\"\n").as_bytes())?;
-        log.write_all(format!("zoom = \"{z}\"\n\n").as_bytes())?;
+        log.write_all(format!("x = \"{}\"\n", x.to_string_radix(10, None)).as_bytes())?;
+        log.write_all(format!("y = \"{}\"\n", y.to_string_radix(10, None)).as_bytes())?;
+        log.write_all(format!("zoom = \"{}\"\n\n", z.to_string_radix(10, None)).as_bytes())?;
 
         time(0, || {
             fract::pipeline::compute_mandelbrot(&mut pipeline, iterations, &z, &x, &y);
@@ -167,6 +167,8 @@ fn output(args: &Args, output: &str, config: &Config) -> std::io::Result<ExitCod
             png(output, &pixels, width, height)
         })?;
     } else {
+        let zoom_factor = Float::with_val(PRECISION, args.zoom);
+
         let sample_rate = 48000usize;
         assert!(sample_rate.is_multiple_of(fps));
         let samples = vec![(0.0, 0.0); sample_rate / fps];
@@ -183,9 +185,9 @@ fn output(args: &Args, output: &str, config: &Config) -> std::io::Result<ExitCod
         // lockstep render and retrieve from output buffer
         for i in 0..args.frames {
             log.write_all(format!("[FRAME] {i}\n").as_bytes())?;
-            log.write_all(format!("x = \"{x}\"\n").as_bytes())?;
-            log.write_all(format!("y = \"{y}\"\n").as_bytes())?;
-            log.write_all(format!("zoom = \"{z}\"\n\n").as_bytes())?;
+            log.write_all(format!("x = \"{}\"\n", x.to_string_radix(10, None)).as_bytes())?;
+            log.write_all(format!("y = \"{}\"\n", y.to_string_radix(10, None)).as_bytes())?;
+            log.write_all(format!("zoom = \"{}\"\n\n", z.to_string_radix(10, None)).as_bytes())?;
 
             let read_idx = i % 2;
             let write_idx = (i + 1) % 2;
@@ -197,7 +199,7 @@ fn output(args: &Args, output: &str, config: &Config) -> std::io::Result<ExitCod
             });
 
             if i < args.frames - 1 {
-                let zoom_delta = Float::with_val(PRECISION, &z * args.zoom);
+                let zoom_delta = Float::with_val(PRECISION, &z * &zoom_factor);
                 z.add_assign_round(zoom_delta, rug::float::Round::Nearest);
                 pipeline.current_buffer = write_idx;
                 fract::pipeline::compute_mandelbrot(&mut pipeline, iterations, &z, &x, &y);
