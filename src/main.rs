@@ -4,7 +4,7 @@ use rug::{
     Float,
     ops::{AddAssignRound, CompleteRound},
 };
-use std::{process::ExitCode, time::UNIX_EPOCH};
+use std::{io::Write, process::ExitCode, time::UNIX_EPOCH};
 
 /// Deep Mandelbrot set renderer.
 #[derive(Parser, Debug)]
@@ -144,13 +144,26 @@ fn output(args: &Args, output: &str, config: &Config) -> std::io::Result<ExitCod
         }
     };
 
+    let current_time = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let data_root = format!("data/{current_time}");
+    _ = std::fs::create_dir_all(&data_root);
+    let mut log = std::fs::File::create(format!("{data_root}/log.txt"))?;
+
     let mut pipeline = fract::pipeline::create_pipeline(None, &palette, width, height);
     let fps = 30;
 
     if args.frames == 1 {
+        log.write_all(b"[FRAME] 0\n")?;
+        log.write_all(format!("x = \"{x}\"\n").as_bytes())?;
+        log.write_all(format!("y = \"{y}\"\n").as_bytes())?;
+        log.write_all(format!("zoom = \"{z}\"\n\n").as_bytes())?;
+
         time(0, || {
             fract::pipeline::compute_mandelbrot(&mut pipeline, iterations, &z, &x, &y);
-            let pixels = fract::pipeline::frame_pixel_bytes(&mut pipeline);
+            let pixels = fract::pipeline::pipeline_frame_pixel_bytes(&pipeline);
             png(output, &pixels, width, height)
         })?;
     } else {
@@ -161,14 +174,39 @@ fn output(args: &Args, output: &str, config: &Config) -> std::io::Result<ExitCod
         use indicatif::ProgressBar;
         let bar = ProgressBar::new(args.frames as u64);
 
-        let mut encoder = Encoder::new(width, height, fps, sample_rate)?;
-        for _ in 0..args.frames {
-            fract::pipeline::compute_mandelbrot(&mut pipeline, iterations, &z, &x, &y);
-            let pixels = fract::pipeline::frame_pixel_bytes(&mut pipeline);
-            let zoom_delta = Float::with_val(PRECISION, &z * args.zoom);
-            z.add_assign_round(zoom_delta, rug::float::Round::Nearest);
+        // render first frame
+        fract::pipeline::compute_mandelbrot(&mut pipeline, iterations, &z, &x, &y);
+        fract::pipeline::stage_frame_pixel_bytes(&pipeline);
+        bar.inc(1);
+
+        let mut encoder = Encoder::new(data_root, width, height, fps, sample_rate)?;
+        // lockstep render and retrieve from output buffer
+        for i in 0..args.frames {
+            log.write_all(format!("[FRAME] {i}\n").as_bytes())?;
+            log.write_all(format!("x = \"{x}\"\n").as_bytes())?;
+            log.write_all(format!("y = \"{y}\"\n").as_bytes())?;
+            log.write_all(format!("zoom = \"{z}\"\n\n").as_bytes())?;
+
+            let read_idx = i % 2;
+            let write_idx = (i + 1) % 2;
+
+            let device = pipeline.device.clone();
+            let read_buffer = pipeline.output_buffers[read_idx].clone();
+            let pixels = std::thread::spawn(move || {
+                fract::pipeline::frame_pixel_bytes(&device, &read_buffer, width, height)
+            });
+
+            if i < args.frames - 1 {
+                let zoom_delta = Float::with_val(PRECISION, &z * args.zoom);
+                z.add_assign_round(zoom_delta, rug::float::Round::Nearest);
+                pipeline.current_buffer = write_idx;
+                fract::pipeline::compute_mandelbrot(&mut pipeline, iterations, &z, &x, &y);
+                fract::pipeline::stage_frame_pixel_bytes(&pipeline);
+                bar.inc(1);
+            }
+
+            let pixels = pixels.join().expect("Render thread panicked");
             encoder.render_frame(&pixels, &samples)?;
-            bar.inc(1);
         }
 
         bar.finish();
@@ -189,12 +227,13 @@ struct Encoder {
 }
 
 impl Encoder {
-    fn new(width: usize, height: usize, fps: usize, sample_rate: usize) -> std::io::Result<Self> {
-        let current_time = std::time::SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
-        let root = format!("data/{current_time}");
+    fn new(
+        root: String,
+        width: usize,
+        height: usize,
+        fps: usize,
+        sample_rate: usize,
+    ) -> std::io::Result<Self> {
         _ = std::fs::create_dir_all(format!("{root}/frames"));
         Ok(Self {
             audio_stream: std::io::BufWriter::new(std::fs::File::create(format!(

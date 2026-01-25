@@ -11,10 +11,10 @@ pub const MAX_ITERATIONS: usize = 100_000;
 
 pub struct Pipeline {
     surface: Option<wgpu::Surface<'static>>,
-    device: wgpu::Device,
+    pub device: wgpu::Device,
     queue: wgpu::Queue,
-    width: usize,
-    height: usize,
+    pub width: usize,
+    pub height: usize,
     //
     pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
@@ -23,7 +23,8 @@ pub struct Pipeline {
     orbit_buffer: wgpu::Buffer,
     offscreen_texture: wgpu::Texture,
     offscreen_texture_view: wgpu::TextureView,
-    output_buffer: wgpu::Buffer,
+    pub output_buffers: [wgpu::Buffer; 2],
+    pub current_buffer: usize,
     orbit: Vec<OrbitDelta>,
     zoom: Float,
     x: Float,
@@ -268,7 +269,13 @@ pub fn create_pipeline(
     let offscreen_texture_view = offscreen_texture.create_view(&Default::default());
 
     let (_, buffer_size) = output_buffer_bytes_per_row_and_size(width, height);
-    let output_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+    let output_buffer1 = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: buffer_size as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let output_buffer2 = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: buffer_size as u64,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
@@ -289,7 +296,8 @@ pub fn create_pipeline(
         orbit_buffer,
         offscreen_texture,
         offscreen_texture_view,
-        output_buffer,
+        output_buffers: [output_buffer1, output_buffer2],
+        current_buffer: 0,
         orbit: Vec::new(),
         zoom: Float::with_val(PRECISION, 0.0),
         x: Float::with_val(PRECISION, 0.0),
@@ -529,11 +537,10 @@ fn output_buffer_bytes_per_row_and_size(width: usize, height: usize) -> (usize, 
     (bpr, buffer_size)
 }
 
-pub fn frame_pixel_bytes(pipeline: &mut Pipeline) -> Vec<u8> {
+pub fn stage_frame_pixel_bytes(pipeline: &Pipeline) {
     let mut encoder = pipeline
         .device
         .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-
     let (bytes_per_row, _) = output_buffer_bytes_per_row_and_size(pipeline.width, pipeline.height);
     encoder.copy_texture_to_buffer(
         wgpu::TexelCopyTextureInfo {
@@ -543,7 +550,7 @@ pub fn frame_pixel_bytes(pipeline: &mut Pipeline) -> Vec<u8> {
             aspect: wgpu::TextureAspect::All,
         },
         wgpu::TexelCopyBufferInfo {
-            buffer: &pipeline.output_buffer,
+            buffer: &pipeline.output_buffers[pipeline.current_buffer],
             layout: wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(bytes_per_row as u32),
@@ -556,25 +563,41 @@ pub fn frame_pixel_bytes(pipeline: &mut Pipeline) -> Vec<u8> {
             depth_or_array_layers: 1,
         },
     );
-
     pipeline.queue.submit(Some(encoder.finish()));
+}
 
-    let buffer_slice = pipeline.output_buffer.slice(..);
+pub fn frame_pixel_bytes(
+    device: &wgpu::Device,
+    output_buffer: &wgpu::Buffer,
+    width: usize,
+    height: usize,
+) -> Vec<u8> {
+    let buffer_slice = output_buffer.slice(..);
     buffer_slice.map_async(wgpu::MapMode::Read, |_| {});
-    pipeline
-        .device
+    device
         .poll(wgpu::PollType::Wait {
             submission_index: None,
             timeout: None,
         })
         .unwrap();
 
+    let (bytes_per_row, _) = output_buffer_bytes_per_row_and_size(width, height);
     let padded_data = buffer_slice.get_mapped_range();
-    let mut result = Vec::with_capacity(pipeline.width * pipeline.height * 4);
+    let mut result = Vec::with_capacity(width * height * 4);
     for chunk in padded_data.chunks(bytes_per_row) {
-        result.extend_from_slice(&chunk[..pipeline.width * 4]);
+        result.extend_from_slice(&chunk[..width * 4]);
     }
     drop(padded_data);
-    pipeline.output_buffer.unmap();
+    output_buffer.unmap();
     result
+}
+
+pub fn pipeline_frame_pixel_bytes(pipeline: &Pipeline) -> Vec<u8> {
+    stage_frame_pixel_bytes(pipeline);
+    frame_pixel_bytes(
+        &pipeline.device,
+        &pipeline.output_buffers[pipeline.current_buffer],
+        pipeline.width,
+        pipeline.height,
+    )
 }
