@@ -1,4 +1,4 @@
 /target
-**/data
-**/captures
-**/config.toml
+/data
+/captures
+config.toml

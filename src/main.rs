@@ -1,12 +1,10 @@
 use clap::Parser;
-use compute::PRECISION;
+use fract::PRECISION;
 use rug::{
     Float,
     ops::{AddAssignRound, CompleteRound},
 };
 use std::{process::ExitCode, time::UNIX_EPOCH};
-
-mod viewer;
 
 /// Deep Mandelbrot set renderer.
 #[derive(Parser, Debug)]
@@ -48,7 +46,7 @@ impl Default for Config {
         Self {
             x: "0.0".to_string(),
             y: "0.0".to_string(),
-            zoom: "1.0".to_string(),
+            zoom: "2.0".to_string(),
             iterations: 10_000,
             width: 1600,
             height: 1600,
@@ -82,9 +80,9 @@ fn main() -> std::io::Result<ExitCode> {
     let width = config.width;
     let height = config.height;
     let palette = match &*config.palette {
-        "classic" => compute::palette::classic().to_vec(),
-        "lava" => compute::palette::lava().to_vec(),
-        "ocean" => compute::palette::ocean().to_vec(),
+        "classic" => fract::palette::classic().to_vec(),
+        "lava" => fract::palette::lava().to_vec(),
+        "ocean" => fract::palette::ocean().to_vec(),
         _ => {
             println!("Unknown palette: {}", config.palette);
             return Ok(ExitCode::FAILURE);
@@ -92,7 +90,7 @@ fn main() -> std::io::Result<ExitCode> {
     };
 
     if args.viewer {
-        viewer::run(viewer::Memory {
+        fract::viewer::run(fract::viewer::Memory {
             zoom: z,
             cursor_x: 0.0,
             cursor_y: 0.0,
@@ -137,22 +135,22 @@ fn output(args: &Args, output: &str, config: &Config) -> std::io::Result<ExitCod
     let width = config.width;
     let height = config.height;
     let palette = match &*config.palette {
-        "classic" => compute::palette::classic().to_vec(),
-        "lava" => compute::palette::lava().to_vec(),
-        "ocean" => compute::palette::ocean().to_vec(),
+        "classic" => fract::palette::classic().to_vec(),
+        "lava" => fract::palette::lava().to_vec(),
+        "ocean" => fract::palette::ocean().to_vec(),
         _ => {
             println!("Unknown palette: {}", config.palette);
             return Ok(ExitCode::FAILURE);
         }
     };
 
-    let mut pipeline = compute::pipeline::create_pipeline(None, &palette, width, height);
+    let mut pipeline = fract::pipeline::create_pipeline(None, &palette, width, height);
     let fps = 30;
 
     if args.frames == 1 {
         time(0, || {
-            compute::pipeline::compute_mandelbrot(&mut pipeline, iterations, &z, &x, &y);
-            let pixels = compute::pipeline::frame_pixel_bytes(&mut pipeline);
+            fract::pipeline::compute_mandelbrot(&mut pipeline, iterations, &z, &x, &y);
+            let pixels = fract::pipeline::frame_pixel_bytes(&mut pipeline);
             png(output, &pixels, width, height)
         })?;
     } else {
@@ -165,8 +163,8 @@ fn output(args: &Args, output: &str, config: &Config) -> std::io::Result<ExitCod
 
         let mut encoder = Encoder::new(width, height, fps, sample_rate)?;
         for _ in 0..args.frames {
-            compute::pipeline::compute_mandelbrot(&mut pipeline, iterations, &z, &x, &y);
-            let pixels = compute::pipeline::frame_pixel_bytes(&mut pipeline);
+            fract::pipeline::compute_mandelbrot(&mut pipeline, iterations, &z, &x, &y);
+            let pixels = fract::pipeline::frame_pixel_bytes(&mut pipeline);
             let zoom_delta = Float::with_val(PRECISION, &z * args.zoom);
             z.add_assign_round(zoom_delta, rug::float::Round::Nearest);
             encoder.render_frame(&pixels, &samples)?;

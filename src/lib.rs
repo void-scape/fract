@@ -5,6 +5,7 @@
 pub mod palette;
 pub mod pipeline;
 pub mod software;
+pub mod viewer;
 
 use rug::Complex;
 use rug::Float;
