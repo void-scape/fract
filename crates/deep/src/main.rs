@@ -102,7 +102,7 @@ fn main() -> std::io::Result<ExitCode> {
         }
     };
 
-    let mut pipeline = compute::software::Pipeline::unbuffered();
+    let mut pipeline = compute::software::Pipeline::unbuffered().super_sampled();
     let mut frame_buffer = vec![tint::Sbgr::default(); width * height];
     let fps = 30;
 
