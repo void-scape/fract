@@ -1,12 +1,12 @@
 use compute::PRECISION;
 use glazer::winit::{
-    event::{DeviceEvent, ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
+    event::{ElementState, KeyEvent, MouseButton, WindowEvent},
     keyboard::{KeyCode, PhysicalKey},
 };
 use rug::{
     Float,
     float::Round,
-    ops::{AddAssignRound, SubAssignRound},
+    ops::{AddAssignRound, MulAssignRound},
 };
 
 fn main() {
@@ -60,51 +60,34 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
         }
         glazer::Input::Window(WindowEvent::MouseInput {
             state: ElementState::Pressed,
-            button: MouseButton::Left,
+            button,
             ..
         }) => {
-            let zoom_delta = Float::with_val(PRECISION, &memory.zoom * 0.5);
-            apply_zoom(memory, zoom_delta);
+            let factor = match button {
+                MouseButton::Left => 0.5,
+                MouseButton::Right => 2.0,
+                _ => return,
+            };
+
+            let zs = match button {
+                MouseButton::Left => 1.0,
+                MouseButton::Right => -1.0,
+                _ => return,
+            };
+
+            let w = compute::WIDTH as f64;
+            let h = compute::HEIGHT as f64;
+            let aspect = w / h;
+
+            let dx = ((memory.cursor_x / w) * 2.0 - 1.0) * aspect * zs;
+            let dy = ((memory.cursor_y / h) * 2.0 - 1.0) * zs;
+            let dcx = Float::with_val(PRECISION, &memory.zoom * dx);
+            let dcy = Float::with_val(PRECISION, &memory.zoom * dy);
+            memory.cx.add_assign_round(dcx, Round::Nearest);
+            memory.cy.add_assign_round(dcy, Round::Nearest);
+            memory.zoom.mul_assign_round(factor, Round::Nearest);
         }
-        glazer::Input::Device(DeviceEvent::MouseWheel { delta }) => match delta {
-            MouseScrollDelta::PixelDelta(delta) => {
-                let delta = delta.y.signum() * (delta.x * delta.x + delta.y * delta.y).sqrt()
-                    / compute::HEIGHT as f64
-                    * 10.0;
-                let zoom_delta = Float::with_val(PRECISION, delta * &memory.zoom);
-                apply_zoom(memory, zoom_delta);
-            }
-            _ => unimplemented!(),
-        },
         _ => {}
-    }
-
-    // Claude slop
-    fn apply_zoom(memory: &mut Memory, zoom_delta: Float) {
-        let w = compute::WIDTH as f64;
-        let h = compute::HEIGHT as f64;
-        let aspect = w / h;
-
-        // Convert cursor position to normalized coordinates [-1, 1] range
-        let norm_x = (memory.cursor_x / w) * 2.0 - 1.0;
-        let norm_y = (memory.cursor_y / h) * 2.0 - 1.0;
-
-        // Apply aspect ratio to x coordinate
-        let mouse_base_x = norm_x * aspect;
-        let mouse_base_y = norm_y;
-
-        // Update zoom
-        memory.zoom.sub_assign_round(&zoom_delta, Round::Nearest);
-
-        // Update center position to zoom towards cursor
-        let mouse_base_x = Float::with_val(PRECISION, mouse_base_x);
-        let mouse_base_y = Float::with_val(PRECISION, mouse_base_y);
-        memory
-            .cx
-            .add_assign_round(&mouse_base_x * &zoom_delta, Round::Nearest);
-        memory
-            .cy
-            .add_assign_round(&mouse_base_y * &zoom_delta, Round::Nearest);
     }
 }
 

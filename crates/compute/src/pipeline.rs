@@ -5,7 +5,7 @@ use rug::{
     ops::{CompleteRound, Pow},
 };
 
-pub const ITERATIONS: usize = 100;
+pub const ITERATIONS: usize = 10_000;
 
 pub struct Pipeline {
     surface: wgpu::Surface<'static>,
@@ -14,7 +14,6 @@ pub struct Pipeline {
     queue: wgpu::Queue,
     //
     pipeline: wgpu::RenderPipeline,
-    perturbation_pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
     uniform_buffer: wgpu::Buffer,
     orbit_buffer: wgpu::Buffer,
@@ -103,7 +102,7 @@ pub fn create_pipeline(window: &Window) -> Pipeline {
         entries: &[
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
+                visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -162,45 +161,11 @@ pub fn create_pipeline(window: &Window) -> Pipeline {
     );
     let constants = [("SWAP_CHANNELS", if needs_swap { 1.0 } else { 0.0 })];
 
-    let perturbation_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: None,
-        layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &perturbation_shader,
-            entry_point: Some("vs_main"),
-            buffers: &[],
-            compilation_options: wgpu::PipelineCompilationOptions {
-                constants: &constants,
-                ..Default::default()
-            },
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &perturbation_shader,
-            entry_point: Some("fs_main"),
-            targets: &[Some(surface_format.into())],
-            compilation_options: wgpu::PipelineCompilationOptions {
-                constants: &constants,
-                ..Default::default()
-            },
-        }),
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
-        cache: None,
-        multiview_mask: None,
-    });
-
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: None,
-        source: wgpu::ShaderSource::Wgsl(
-            concat!(include_str!("color.wgsl"), include_str!("shader.wgsl")).into(),
-        ),
-    });
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: None,
         layout: Some(&pipeline_layout),
         vertex: wgpu::VertexState {
-            module: &shader,
+            module: &perturbation_shader,
             entry_point: Some("vs_main"),
             buffers: &[],
             compilation_options: wgpu::PipelineCompilationOptions {
@@ -209,7 +174,7 @@ pub fn create_pipeline(window: &Window) -> Pipeline {
             },
         },
         fragment: Some(wgpu::FragmentState {
-            module: &shader,
+            module: &perturbation_shader,
             entry_point: Some("fs_main"),
             targets: &[Some(surface_format.into())],
             compilation_options: wgpu::PipelineCompilationOptions {
@@ -248,7 +213,6 @@ pub fn create_pipeline(window: &Window) -> Pipeline {
         queue,
         //
         pipeline,
-        perturbation_pipeline,
         bind_group,
         uniform_buffer,
         orbit_buffer,
@@ -268,15 +232,11 @@ struct MandelbrotUniform {
     width: u32,
     height: u32,
     max_iteration: u32,
-    xstep: f32,
-    ystep: f32,
-    sdx: f32,
-    sdy: f32,
     orbit_len: u32,
     zoom: f32,
     cx: f32,
     cy: f32,
-    initial_q: i32,
+    q: i32,
     //
     // approx_iteration: u32,
     // ax: f32,
@@ -324,7 +284,6 @@ pub fn compute_mandelbrot(
     let mut xy = Float::with_val(PRECISION, 0.0);
 
     for _ in 0..max_iteration {
-        // Get the exponents of x and y
         let x_exp = if x.is_zero() {
             0
         } else {
@@ -336,13 +295,8 @@ pub fn compute_mandelbrot(
             y.get_exp().unwrap_or(0)
         };
 
-        // The scale exponent is the maximum of the two
         let scale_exp = x_exp.max(y_exp);
-
-        // Handle very small values
         let scale_exp = if scale_exp < -10000 { 0 } else { scale_exp };
-
-        // Extract mantissas scaled relative to scale_exp
         let x_mantissa = if x.is_zero() {
             0.0
         } else {
@@ -357,7 +311,6 @@ pub fn compute_mandelbrot(
             y_shifted.to_f32()
         };
 
-        // Store as (x_mantissa, y_mantissa, scale_exp)
         pipeline.orbit.push(OrbitDelta {
             dx: x_mantissa,
             dy: y_mantissa,
@@ -376,40 +329,6 @@ pub fn compute_mandelbrot(
         x.assign(&x2 - &y2);
         x += x0;
     }
-
-    // pipeline.orbit.clear();
-    // let x0 = x;
-    // let y0 = y;
-    // let mut x = Float::with_val(PRECISION, 0.0);
-    // let mut y = Float::with_val(PRECISION, 0.0);
-    // let mut x2 = Float::with_val(PRECISION, 0.0);
-    // let mut y2 = Float::with_val(PRECISION, 0.0);
-    // let mut xy = Float::with_val(PRECISION, 0.0);
-    // for _ in 0..max_iteration {
-    //     pipeline.orbit.push((x.to_f32(), y.to_f32()));
-    //     x2.assign(&x * &x);
-    //     y2.assign(&y * &y);
-    //     if (&x2 + &y2).complete(PRECISION) > 4.0 {
-    //         break;
-    //     }
-    //     xy.assign(&x * &y);
-    //     y.assign(&xy * 2.0);
-    //     y += y0;
-    //     x.assign(&x2 - &y2);
-    //     x += x0;
-    // }
-
-    // Normalize steps and offsets so they are roughly 1.0
-    // We effectively pass the "shape" of the screen, not the absolute distance
-    let w = crate::WIDTH as f64;
-    let h = crate::HEIGHT as f64;
-    let aspect = w / h;
-
-    // REMOVE 'z' from these calculations
-    let xstep = 2.0 * aspect / w;
-    let ystep = 2.0 / h;
-    let sdx = -aspect;
-    let sdy = -1.0;
 
     // let w = crate::WIDTH as f64;
     // let h = crate::HEIGHT as f64;
@@ -434,11 +353,9 @@ pub fn compute_mandelbrot(
     // println!("orbit len: {}", pipeline.orbit.len());
     // println!();
 
-    let initial_q = if zoom.is_zero() {
+    let q = if zoom.is_zero() {
         0
     } else {
-        // This is equivalent to: 1 + get_exp(radius)
-        // get_exp returns the exponent of the high-precision float
         1 + zoom.get_exp().unwrap_or(0)
     };
 
@@ -446,15 +363,11 @@ pub fn compute_mandelbrot(
         width: crate::WIDTH as u32,
         height: crate::HEIGHT as u32,
         max_iteration: max_iteration as u32,
-        xstep: xstep as f32,
-        ystep: ystep as f32,
-        sdx: sdx as f32,
-        sdy: sdy as f32,
         orbit_len: pipeline.orbit.len() as u32,
         zoom: zoom.to_f32(),
         cx: cx.to_f32(),
         cy: cy.to_f32(),
-        initial_q,
+        q,
         //
         // approx_iteration: approx_iteration as u32,
         // ax: a.re as f32,
@@ -488,14 +401,7 @@ pub fn compute_mandelbrot(
         occlusion_query_set: None,
         multiview_mask: None,
     });
-    // NOTE: When the zoom level is high, the perturbation algorithm I have
-    // implemented becomes unstable, so it falls back to the original direct
-    // implementation.
-    if *zoom < 0.001 {
-        rpass.set_pipeline(&pipeline.perturbation_pipeline);
-    } else {
-        rpass.set_pipeline(&pipeline.pipeline);
-    }
+    rpass.set_pipeline(&pipeline.pipeline);
     rpass.set_bind_group(0, &pipeline.bind_group, &[]);
     rpass.draw(0..3, 0..1);
     drop(rpass);
