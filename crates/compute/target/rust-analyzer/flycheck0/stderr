@@ -1,7 +1,0 @@
-    Blocking waiting for file lock on package cache
-    Updating crates.io index
-error: no matching package found
-searched package name: `tint`
-perhaps you meant:      rast
-location searched: /Users/nicolasball/dev/probe/blaze/crates/rast
-required by package `compute v0.1.0 (/Users/nicolasball/dev/probe/fract/crates/compute)`

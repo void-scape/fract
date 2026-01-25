@@ -26,10 +26,7 @@ struct Memory {
     cursor_y: f64,
     cx: Float,
     cy: Float,
-    #[cfg(not(feature = "software"))]
     pipeline: Option<compute::pipeline::Pipeline>,
-    #[cfg(feature = "software")]
-    pipeline: compute::software::Pipeline,
 }
 
 impl Default for Memory {
@@ -40,10 +37,7 @@ impl Default for Memory {
             zoom: Float::with_val(PRECISION, 2.0),
             cx: Float::with_val(PRECISION, 0.0),
             cy: Float::with_val(PRECISION, 0.0),
-            #[cfg(not(feature = "software"))]
             pipeline: None,
-            #[cfg(feature = "software")]
-            pipeline: compute::software::Pipeline::default(),
         }
     }
 }
@@ -118,8 +112,6 @@ fn update_and_render(
     glazer::PlatformUpdate {
         window,
         memory,
-        #[cfg(feature = "software")]
-        frame_buffer,
         width,
         height,
         ..
@@ -131,37 +123,15 @@ fn update_and_render(
     assert_eq!(width, compute::WIDTH);
     assert_eq!(height, compute::HEIGHT);
 
-    #[cfg(not(feature = "software"))]
     let max_iteration = compute::pipeline::ITERATIONS;
-    #[cfg(feature = "software")]
-    let current_zoom_magnitude = -memory.zoom.to_f64().log10();
-    #[cfg(feature = "software")]
-    let max_iteration = (100.0 + 50.0 * current_zoom_magnitude.max(0.0)) as usize;
-
-    #[cfg(not(feature = "software"))]
     let pipeline = memory
         .pipeline
         .get_or_insert_with(|| compute::pipeline::create_pipeline(window));
-
-    #[cfg(not(feature = "software"))]
     compute::pipeline::compute_mandelbrot(
         pipeline,
         max_iteration,
         &memory.zoom,
         &memory.cx,
         &memory.cy,
-    );
-
-    #[cfg(feature = "software")]
-    compute::software::compute_mandelbrot(
-        &mut memory.pipeline,
-        frame_buffer,
-        max_iteration,
-        &memory.zoom,
-        &memory.cx,
-        &memory.cy,
-        &compute::palette::classic(),
-        compute::WIDTH,
-        compute::HEIGHT,
     );
 }

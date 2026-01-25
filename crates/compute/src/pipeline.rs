@@ -1,8 +1,11 @@
-use crate::{MANDELBROT_XRANGE, MANDELBROT_YRANGE, PRECISION, series_approximation_coefficients};
-use rug::{Assign, Float, ops::CompleteRound};
+use crate::PRECISION;
+use rug::{
+    Assign, Float,
+    ops::{CompleteRound, Pow},
+};
 use winit::window::Window;
 
-pub const ITERATIONS: usize = 10_000;
+pub const ITERATIONS: usize = 100;
 
 pub struct Pipeline {
     surface: wgpu::Surface<'static>,
@@ -17,10 +20,18 @@ pub struct Pipeline {
     orbit_buffer: wgpu::Buffer,
     offscreen_texture: wgpu::Texture,
     offscreen_texture_view: wgpu::TextureView,
-    orbit: Vec<(f32, f32)>,
+    orbit: Vec<OrbitDelta>,
     zoom: Float,
     x: Float,
     y: Float,
+}
+
+#[repr(C)]
+struct OrbitDelta {
+    dx: f32,
+    dy: f32,
+    exponent: i32,
+    _padding: u32,
 }
 
 pub fn create_pipeline(window: &Window) -> Pipeline {
@@ -82,7 +93,7 @@ pub fn create_pipeline(window: &Window) -> Pipeline {
 
     let orbit_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
-        size: std::mem::size_of::<f32>() as u64 * 2 * ITERATIONS as u64,
+        size: std::mem::size_of::<OrbitDelta>() as u64 * ITERATIONS as u64,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -252,6 +263,7 @@ pub fn create_pipeline(window: &Window) -> Pipeline {
 
 #[repr(C)]
 #[derive(Copy, Clone)]
+
 struct MandelbrotUniform {
     width: u32,
     height: u32,
@@ -264,14 +276,15 @@ struct MandelbrotUniform {
     zoom: f32,
     cx: f32,
     cy: f32,
+    initial_q: i32,
     //
-    approx_iteration: u32,
-    ax: f32,
-    ay: f32,
-    bx: f32,
-    by: f32,
-    cxx: f32,
-    cyy: f32,
+    // approx_iteration: u32,
+    // ax: f32,
+    // ay: f32,
+    // bx: f32,
+    // by: f32,
+    // cxx: f32,
+    // cyy: f32,
 }
 
 fn byte_slice<T>(slice: &[T]) -> &[u8] {
@@ -309,8 +322,49 @@ pub fn compute_mandelbrot(
     let mut x2 = Float::with_val(PRECISION, 0.0);
     let mut y2 = Float::with_val(PRECISION, 0.0);
     let mut xy = Float::with_val(PRECISION, 0.0);
+
     for _ in 0..max_iteration {
-        pipeline.orbit.push((x.to_f32(), y.to_f32()));
+        // Get the exponents of x and y
+        let x_exp = if x.is_zero() {
+            0
+        } else {
+            x.get_exp().unwrap_or(0)
+        };
+        let y_exp = if y.is_zero() {
+            0
+        } else {
+            y.get_exp().unwrap_or(0)
+        };
+
+        // The scale exponent is the maximum of the two
+        let scale_exp = x_exp.max(y_exp);
+
+        // Handle very small values
+        let scale_exp = if scale_exp < -10000 { 0 } else { scale_exp };
+
+        // Extract mantissas scaled relative to scale_exp
+        let x_mantissa = if x.is_zero() {
+            0.0
+        } else {
+            let x_shifted = &x / Float::with_val(PRECISION, 2.0).pow(scale_exp);
+            x_shifted.to_f32()
+        };
+
+        let y_mantissa = if y.is_zero() {
+            0.0
+        } else {
+            let y_shifted = &y / Float::with_val(PRECISION, 2.0).pow(scale_exp);
+            y_shifted.to_f32()
+        };
+
+        // Store as (x_mantissa, y_mantissa, scale_exp)
+        pipeline.orbit.push(OrbitDelta {
+            dx: x_mantissa,
+            dy: y_mantissa,
+            exponent: scale_exp,
+            _padding: 0,
+        });
+
         x2.assign(&x * &x);
         y2.assign(&y * &y);
         if (&x2 + &y2).complete(PRECISION) > 4.0 {
@@ -323,27 +377,70 @@ pub fn compute_mandelbrot(
         x += x0;
     }
 
+    // pipeline.orbit.clear();
+    // let x0 = x;
+    // let y0 = y;
+    // let mut x = Float::with_val(PRECISION, 0.0);
+    // let mut y = Float::with_val(PRECISION, 0.0);
+    // let mut x2 = Float::with_val(PRECISION, 0.0);
+    // let mut y2 = Float::with_val(PRECISION, 0.0);
+    // let mut xy = Float::with_val(PRECISION, 0.0);
+    // for _ in 0..max_iteration {
+    //     pipeline.orbit.push((x.to_f32(), y.to_f32()));
+    //     x2.assign(&x * &x);
+    //     y2.assign(&y * &y);
+    //     if (&x2 + &y2).complete(PRECISION) > 4.0 {
+    //         break;
+    //     }
+    //     xy.assign(&x * &y);
+    //     y.assign(&xy * 2.0);
+    //     y += y0;
+    //     x.assign(&x2 - &y2);
+    //     x += x0;
+    // }
+
+    // Normalize steps and offsets so they are roughly 1.0
+    // We effectively pass the "shape" of the screen, not the absolute distance
     let w = crate::WIDTH as f64;
     let h = crate::HEIGHT as f64;
-    let xstep = (Float::with_val(PRECISION, MANDELBROT_XRANGE) * zoom / w).to_f64();
-    let ystep = (Float::with_val(PRECISION, MANDELBROT_YRANGE) * zoom / h).to_f64();
-    let sdx = (Float::with_val(PRECISION, -2.00) * zoom).to_f64();
-    let sdy = (Float::with_val(PRECISION, -1.12) * zoom).to_f64();
-    let (a, b, c, approx_iteration) =
-        series_approximation_coefficients(&pipeline.orbit, sdx, sdy, xstep, ystep);
+    let aspect = w / h;
 
-    println!("x: {}", cx.to_string_radix(10, Some(50)));
-    println!("y: {}", cy.to_string_radix(10, Some(50)));
-    println!("z: {}", zoom.to_string_radix(10, Some(50)));
-    println!("i: {}", max_iteration);
+    // REMOVE 'z' from these calculations
+    let xstep = 2.0 * aspect / w;
+    let ystep = 2.0 / h;
+    let sdx = -aspect;
+    let sdy = -1.0;
 
-    println!("a: {}", a);
-    println!("b: {}", b);
-    println!("c: {}", c);
+    // let w = crate::WIDTH as f64;
+    // let h = crate::HEIGHT as f64;
+    // let xstep = (Float::with_val(PRECISION, MANDELBROT_XRANGE) * zoom / w).to_f64();
+    // let ystep = (Float::with_val(PRECISION, MANDELBROT_YRANGE) * zoom / h).to_f64();
+    // let sdx = (Float::with_val(PRECISION, -2.00) * zoom).to_f64();
+    // let sdy = (Float::with_val(PRECISION, -1.12) * zoom).to_f64();
 
-    println!("approx: {}", approx_iteration);
-    println!("orbit len: {}", pipeline.orbit.len());
-    println!();
+    // let (a, b, c, approx_iteration) =
+    //     series_approximation_coefficients(&pipeline.orbit, sdx, sdy, xstep, ystep);
+
+    // println!("x: {}", cx.to_string_radix(10, Some(50)));
+    // println!("y: {}", cy.to_string_radix(10, Some(50)));
+    // println!("z: {}", zoom.to_string_radix(10, Some(50)));
+    // println!("i: {}", max_iteration);
+    //
+    // println!("a: {}", a);
+    // println!("b: {}", b);
+    // println!("c: {}", c);
+    //
+    // println!("approx: {}", approx_iteration);
+    // println!("orbit len: {}", pipeline.orbit.len());
+    // println!();
+
+    let initial_q = if zoom.is_zero() {
+        0
+    } else {
+        // This is equivalent to: 1 + get_exp(radius)
+        // get_exp returns the exponent of the high-precision float
+        1 + zoom.get_exp().unwrap_or(0)
+    };
 
     let args = MandelbrotUniform {
         width: crate::WIDTH as u32,
@@ -357,13 +454,15 @@ pub fn compute_mandelbrot(
         zoom: zoom.to_f32(),
         cx: cx.to_f32(),
         cy: cy.to_f32(),
-        approx_iteration: approx_iteration as u32,
-        ax: a.re as f32,
-        ay: a.im as f32,
-        bx: b.re as f32,
-        by: b.im as f32,
-        cxx: c.re as f32,
-        cyy: c.im as f32,
+        initial_q,
+        //
+        // approx_iteration: approx_iteration as u32,
+        // ax: a.re as f32,
+        // ay: a.im as f32,
+        // bx: b.re as f32,
+        // by: b.im as f32,
+        // cxx: c.re as f32,
+        // cyy: c.im as f32,
     };
 
     pipeline

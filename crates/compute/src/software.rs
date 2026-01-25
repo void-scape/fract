@@ -194,9 +194,7 @@ fn mandelbrot_perturbation(
     let ystep = 2.0 * z / h;
     let sdx = -z * aspect;
     let sdy = -z;
-
-    let (a, b, c, approx_iteration) =
-        series_approximation_coefficients(orbit, sdx, sdy, xstep, ystep);
+    let (a, b, c, approx_iteration) = series_approximation_coefficients(orbit, sdx, sdy, zoom);
 
     if super_sampled {
         frame_buffer

@@ -39,21 +39,15 @@ fn vs_main(@builtin(vertex_index) in_vertex_index: u32) -> VertexOutput {
     out.uv = uv[in_vertex_index];
     return out;
 }
-fn hsv2rgb(c: vec3<f32>) -> vec3<f32> {
-    let K = vec4<f32>(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
-    let p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
-    return c.z * mix(K.xxx, clamp(p - K.xxx, vec3(0.0), vec3(1.0)), c.y);
-}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let px = in.uv.x * f32(args.width);
     let py = in.uv.y * f32(args.height);
 
-    let MANDELBROT_XRANGE = 2.47;
-    let MANDELBROT_YRANGE = 2.24;
-
-    let x0 = ((px / f32(args.width) * MANDELBROT_XRANGE) - 2.00) * args.zoom + args.cx;
-    let y0 = ((py / f32(args.height) * MANDELBROT_YRANGE) - 1.12) * args.zoom - args.cy;
+	let aspect = f32(args.width) / f32(args.height);
+	let x0 = (px / f32(args.width) * 2.0 - 1.0) * args.zoom * aspect + args.cx;
+	let y0 = (py / f32(args.height) * 2.0 - 1.0) * args.zoom - args.cy;
 
     var x: f32 = 0.0;
     var y: f32 = 0.0;
