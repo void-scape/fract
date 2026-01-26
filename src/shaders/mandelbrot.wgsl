@@ -73,6 +73,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 	var x = points[k].x;
 	var y = points[k].y;
 
+	var stripe = 0.0;
+    let stripe_density = 10.0;
+
 	for (var i = k; i < i32(args.iterations); i++) {
 		j += 1;
 		k += 1;
@@ -97,6 +100,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 		y = points[k].y;
 		let fx = x * pow(2.0, f32(points[k].e)) + S * dx;
 		let fy = y * pow(2.0, f32(points[k].e)) + S * dy;
+
+		stripe += 0.5 * sin(stripe_density * atan2(fy, fx)) + 0.5;
+
 		if (fx * fx + fy * fy > 10000.0) {
 			break;
 		}
@@ -130,7 +136,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 	y = points[k].y;
 	let fx = x * pow(2.0, f32(points[k].e)) + S * dx;
 	let fy = y * pow(2.0, f32(points[k].e)) + S * dy;
- 	return iteration_to_rgb(u32(j), fx, fy);
+	return stripe_to_rgb(u32(j), fx, fy, stripe);
+ 	// return iteration_to_rgb(u32(j), fx, fy);
 }
 
 override SWAP_CHANNELS: bool = false;
@@ -149,5 +156,20 @@ fn iteration_to_rgb(iteration: u32, x: f32, y: f32) -> vec4<f32> {
 
 	let uv = vec2(iter / 24.0, 0.5);
 	let rgb = textureSample(palette, palette_sampler, uv).rgb;
+    return vec4(select(rgb.bgr, rgb, SWAP_CHANNELS), 1.0);
+}
+
+fn stripe_to_rgb(iteration: u32, x: f32, y: f32, stripe_accum: f32) -> vec4<f32> {
+    if (iteration == args.iterations) {
+        return vec4(0.0, 0.0, 0.0, 1.0);
+    }
+
+    let zn = dot(vec2(x, y), vec2(x, y));
+    let nu = log2(log2(zn) * 0.5);
+    let smooth_iter = f32(iteration) + 1.0 - nu;
+
+    let avg_stripe = stripe_accum / smooth_iter; 
+    let uv_x = (smooth_iter / 100.0) + (avg_stripe * 0.5); 
+    let rgb = textureSample(palette, palette_sampler, vec2(uv_x, 0.5)).rgb;
     return vec4(select(rgb.bgr, rgb, SWAP_CHANNELS), 1.0);
 }
