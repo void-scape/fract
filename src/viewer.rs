@@ -99,7 +99,13 @@ fn update_and_render(
     window.set_title("Mandelbrot Set");
 
     let pipeline = memory.pipeline.get_or_insert_with(|| {
-        crate::pipeline::create_pipeline(Some(window), &memory.palette, memory.width, memory.height)
+        crate::pipeline::create_pipeline(
+            Some(window),
+            &memory.palette,
+            memory.width,
+            memory.height,
+            false,
+        )
     });
     crate::pipeline::compute_mandelbrot(
         pipeline,

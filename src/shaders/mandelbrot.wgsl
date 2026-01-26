@@ -1,21 +1,31 @@
 struct MandelbrotUniform {
     width: u32,
     height: u32,
-    max_iteration: u32,
-    orbit_len: u32,
+    iterations: u32,
     zoom: f32,
     q: i32,
 }
 
-struct OrbitDelta {
-	dx: f32,
-	dy: f32,
-	exponent: i32,
+struct OrbitUniform {
+    points: u32,
+    polylim: u32,
+	poly_scale_exponent: i32,
+	a: f32,
+	b: f32,
+	c: f32,
+	d: f32,
+}
+
+struct RefPoint {
+	x: f32,
+	y: f32,
+	e: i32,
 	_pad: u32,
 }
 
 @group(0) @binding(0) var<uniform> args: MandelbrotUniform;
-@group(0) @binding(1) var<storage, read> orbit: array<OrbitDelta>;
+@group(0) @binding(1) var<uniform> orbit: OrbitUniform;
+@group(0) @binding(2) var<storage, read> points: array<RefPoint>;
 
 struct VertexInput {
     @location(0) position: vec2<f32>,
@@ -41,24 +51,31 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 	var q = args.q - 1;
 	let cq = q;
+	q = q + orbit.poly_scale_exponent;
 	var S = pow(2.0, f32(q));
 	var dcx = in.delta.x;
 	var dcy = in.delta.y;
 
-	var dx = 0.0;
-	var dy = 0.0;
+	// dx + dyi = (p0 + p1 i) * (dcx, dcy) + (p2 + p3i) * (dcx + dcy * i) * (dcx + dcy * i)
+	let sqrx = dcx * dcx - dcy * dcy;
+	let sqry = 2.0 * dcx * dcy;
+	
+	let cux = dcx * sqrx - dcy * sqry;
+	let cuy = dcx * sqry + dcy * sqrx;
+	var dx = orbit.a * dcx - orbit.b * dcy + orbit.c * sqrx - orbit.d * sqry;
+	var dy = orbit.a * dcy + orbit.b * dcx + orbit.c * sqry + orbit.d * sqrx;
 
-	var j = 0;
-	var k = 0;
+	var k = i32(orbit.polylim);
+	var j = k;
 
-	var x = orbit[k].dx;
-	var y = orbit[k].dy;
+	var x = points[k].x;
+	var y = points[k].y;
 
-	for (var i = k; i < i32(args.max_iteration); i++) {
+	for (var i = k; i < i32(args.iterations); i++) {
 		j += 1;
 		k += 1;
 
-		let os = orbit[k - 1].exponent;
+		let os = points[k - 1].e;
 		dcx = in.delta.x * pow(2.0, f32(-q + cq - os));
 		dcy = in.delta.y * pow(2.0, f32(-q + cq - os));
 		var unS = pow(2.0, f32(q) - f32(os));
@@ -74,10 +91,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 		q = q + os;
 		S = pow(2.0, f32(q));
 
-		x = orbit[k].dx;
-		y = orbit[k].dy;
-		let fx = x * pow(2.0, f32(orbit[k].exponent)) + S * dx;
-		let fy = y * pow(2.0, f32(orbit[k].exponent)) + S * dy;
+		x = points[k].x;
+		y = points[k].y;
+		let fx = x * pow(2.0, f32(points[k].e)) + S * dx;
+		let fy = y * pow(2.0, f32(points[k].e)) + S * dy;
 		if (fx * fx + fy * fy > 10000.0) {
 			break;
 		}
@@ -93,7 +110,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
 		if (
 			(fx * fx + fy * fy < S * S * dx * dx + S * S * dy * dy) 
-				|| (k >= (i32(args.orbit_len) - 1))
+				|| (k >= (i32(orbit.points) - 1))
 		) {
 			dx = fx;
 			dy = fy;
@@ -102,25 +119,25 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 			dcx = in.delta.x * pow(2.0, f32(-q + cq));
 			dcy = in.delta.y * pow(2.0, f32(-q + cq));
 			k = 0;
-			x = orbit[0].dx;
-			y = orbit[0].dy;
+			x = points[0].x;
+			y = points[0].y;
 		}
 	}
 
-	x = orbit[k].dx;
-	y = orbit[k].dy;
-	let fx = x * pow(2.0, f32(orbit[k].exponent)) + S * dx;
-	let fy = y * pow(2.0, f32(orbit[k].exponent)) + S * dy;
+	x = points[k].x;
+	y = points[k].y;
+	let fx = x * pow(2.0, f32(points[k].e)) + S * dx;
+	let fy = y * pow(2.0, f32(points[k].e)) + S * dy;
  	return iteration_to_rgb(u32(j), fx, fy);
 }
 
-@group(0) @binding(2) var palette: texture_2d<f32>;
-@group(0) @binding(3) var palette_sampler: sampler;
 override SWAP_CHANNELS: bool = false;
+@group(0) @binding(3) var palette: texture_2d<f32>;
+@group(0) @binding(4) var palette_sampler: sampler;
 
 fn iteration_to_rgb(iteration: u32, x: f32, y: f32) -> vec4<f32> {
-    if (iteration == args.max_iteration) {
-        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    if (iteration == args.iterations) {
+        return vec4(0.0, 0.0, 0.0, 1.0);
     }
 
 	// https://en.wikipedia.org/wiki/Plotting_algorithms_for_the_Mandelbrot_set#Continuous_(smooth)_coloring
@@ -128,7 +145,7 @@ fn iteration_to_rgb(iteration: u32, x: f32, y: f32) -> vec4<f32> {
     let nu = log2(log2(zn) * 0.5);
     let iter = f32(iteration) + 1.0 - nu;
 
-	let uv = vec2<f32>(iter / 24.0, 0.5);
+	let uv = vec2(iter / 24.0, 0.5);
 	let rgb = textureSample(palette, palette_sampler, uv).rgb;
-    return vec4<f32>(select(rgb.bgr, rgb, SWAP_CHANNELS), 1.0);
+    return vec4(select(rgb.bgr, rgb, SWAP_CHANNELS), 1.0);
 }

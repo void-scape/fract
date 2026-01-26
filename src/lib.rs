@@ -2,15 +2,21 @@
 #![allow(internal_features)]
 #![feature(core_intrinsics)]
 
+mod orbit;
 pub mod palette;
 pub mod pipeline;
 pub mod software;
+mod ssaa;
 pub mod viewer;
 
 use rug::Complex;
 use rug::Float;
 
 pub const PRECISION: u32 = 1024;
+
+pub fn byte_slice<T>(slice: &[T]) -> &[u8] {
+    unsafe { std::slice::from_raw_parts(slice.as_ptr().cast(), std::mem::size_of_val(slice)) }
+}
 
 /// Compute the series approximation coefficients for a given reference `orbit`.
 ///

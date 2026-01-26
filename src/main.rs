@@ -5,6 +5,7 @@ use rug::{
     ops::{AddAssignRound, CompleteRound},
 };
 use std::{io::Write, process::ExitCode, time::UNIX_EPOCH};
+use tint::Sbgr;
 
 /// Deep Mandelbrot set renderer.
 #[derive(Parser, Debug)]
@@ -39,6 +40,7 @@ struct Config {
     width: usize,
     height: usize,
     palette: String,
+    ssaa: bool,
 }
 
 impl Default for Config {
@@ -51,6 +53,7 @@ impl Default for Config {
             width: 1600,
             height: 1600,
             palette: "classic".to_string(),
+            ssaa: false,
         }
     }
 }
@@ -69,16 +72,6 @@ fn main() -> std::io::Result<ExitCode> {
         Config::default()
     };
 
-    if let Some(path) = args.output.take() {
-        output(&args, &path, &config)?;
-    }
-
-    let x = Float::parse(config.x).unwrap().complete(PRECISION);
-    let y = Float::parse(config.y).unwrap().complete(PRECISION);
-    let z = Float::parse(config.zoom).unwrap().complete(PRECISION);
-    let iterations = config.iterations;
-    let width = config.width;
-    let height = config.height;
     let palette = match &*config.palette {
         "classic" => fract::palette::classic().to_vec(),
         "lava" => fract::palette::lava().to_vec(),
@@ -88,6 +81,17 @@ fn main() -> std::io::Result<ExitCode> {
             return Ok(ExitCode::FAILURE);
         }
     };
+
+    if let Some(path) = args.output.take() {
+        output(&args, &path, &config, &palette)?;
+    }
+
+    let x = Float::parse(config.x).unwrap().complete(PRECISION);
+    let y = Float::parse(config.y).unwrap().complete(PRECISION);
+    let z = Float::parse(config.zoom).unwrap().complete(PRECISION);
+    let iterations = config.iterations;
+    let width = config.width;
+    let height = config.height;
 
     if args.viewer {
         fract::viewer::run(fract::viewer::Memory {
@@ -107,7 +111,12 @@ fn main() -> std::io::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn output(args: &Args, output: &str, config: &Config) -> std::io::Result<ExitCode> {
+fn output(
+    args: &Args,
+    output: &str,
+    config: &Config,
+    palette: &[Sbgr],
+) -> std::io::Result<ExitCode> {
     if !output.ends_with(".png") && !output.ends_with(".mp4") {
         println!("Supported output files types are PNG and MP4");
         return Ok(ExitCode::FAILURE);
@@ -134,15 +143,7 @@ fn output(args: &Args, output: &str, config: &Config) -> std::io::Result<ExitCod
     let iterations = config.iterations;
     let width = config.width;
     let height = config.height;
-    let palette = match &*config.palette {
-        "classic" => fract::palette::classic().to_vec(),
-        "lava" => fract::palette::lava().to_vec(),
-        "ocean" => fract::palette::ocean().to_vec(),
-        _ => {
-            println!("Unknown palette: {}", config.palette);
-            return Ok(ExitCode::FAILURE);
-        }
-    };
+    let ssaa = config.ssaa;
 
     let current_time = std::time::SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -152,7 +153,8 @@ fn output(args: &Args, output: &str, config: &Config) -> std::io::Result<ExitCod
     _ = std::fs::create_dir_all(&data_root);
     let mut log = std::fs::File::create(format!("{data_root}/log.txt"))?;
 
-    let mut pipeline = fract::pipeline::create_pipeline(None, &palette, width, height);
+    env_logger::init();
+    let mut pipeline = fract::pipeline::create_pipeline(None, palette, width, height, ssaa);
     let fps = 30;
 
     if args.frames == 1 {
@@ -162,6 +164,7 @@ fn output(args: &Args, output: &str, config: &Config) -> std::io::Result<ExitCod
         log.write_all(format!("zoom = \"{}\"\n\n", z.to_string_radix(10, None)).as_bytes())?;
 
         time(0, || {
+            println!("rendering");
             fract::pipeline::compute_mandelbrot(&mut pipeline, iterations, &z, &x, &y);
             let pixels = fract::pipeline::pipeline_frame_pixel_bytes(&pipeline);
             png(output, &pixels, width, height)

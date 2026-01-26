@@ -1,9 +1,6 @@
-use crate::PRECISION;
+use crate::{PRECISION, byte_slice, orbit::Orbit, ssaa::SsaaPipeline};
 use glazer::winit::window::Window;
-use rug::{
-    Assign, Float,
-    ops::{CompleteRound, Pow, PowAssign},
-};
+use rug::{Assign, Float, ops::PowAssign};
 use tint::Sbgr;
 use wgpu::util::DeviceExt;
 
@@ -17,26 +14,16 @@ pub struct Pipeline {
     pub height: usize,
     //
     pipeline: wgpu::RenderPipeline,
+    ssaa: SsaaPipeline,
+    orbit: Orbit,
     vertex_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     uniform_buffer: wgpu::Buffer,
-    orbit_buffer: wgpu::Buffer,
-    offscreen_texture: wgpu::Texture,
-    offscreen_texture_view: wgpu::TextureView,
     pub output_buffers: [wgpu::Buffer; 2],
     pub current_buffer: usize,
-    orbit: Vec<OrbitDelta>,
     zoom: Float,
     x: Float,
     y: Float,
-}
-
-#[repr(C)]
-struct OrbitDelta {
-    dx: f32,
-    dy: f32,
-    exponent: i32,
-    _padding: u32,
 }
 
 pub fn create_pipeline(
@@ -44,9 +31,8 @@ pub fn create_pipeline(
     palette: &[Sbgr],
     width: usize,
     height: usize,
+    ssaa: bool,
 ) -> Pipeline {
-    env_logger::init();
-
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
     let surface = window.map(|window| {
         instance
@@ -69,7 +55,7 @@ pub fn create_pipeline(
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: None,
         required_features: wgpu::Features::empty(),
-        required_limits: wgpu::Limits::downlevel_defaults(),
+        required_limits: adapter.limits(),
         experimental_features: wgpu::ExperimentalFeatures::disabled(),
         memory_hints: wgpu::MemoryHints::MemoryUsage,
         trace: wgpu::Trace::Off,
@@ -102,17 +88,12 @@ pub fn create_pipeline(
         wgpu::TextureFormat::Rgba8UnormSrgb
     };
 
+    let orbit = Orbit::new(&device);
+
     let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: std::mem::size_of::<MandelbrotUniform>() as u64,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-
-    let orbit_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
-        size: std::mem::size_of::<OrbitDelta>() as u64 * MAX_ITERATIONS as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
 
@@ -142,7 +123,7 @@ pub fn create_pipeline(
                 binding: 1,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
                     min_binding_size: None,
                 },
@@ -150,6 +131,16 @@ pub fn create_pipeline(
             },
             wgpu::BindGroupLayoutEntry {
                 binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
                     sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -159,7 +150,7 @@ pub fn create_pipeline(
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: 3,
+                binding: 4,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 count: None,
@@ -177,14 +168,18 @@ pub fn create_pipeline(
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: orbit_buffer.as_entire_binding(),
+                resource: orbit.uniform.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 2,
-                resource: wgpu::BindingResource::TextureView(&palette_texture_view),
+                resource: orbit.point_buffer.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 3,
+                resource: wgpu::BindingResource::TextureView(&palette_texture_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
                 resource: wgpu::BindingResource::Sampler(&palette_sampler),
             },
         ],
@@ -211,7 +206,7 @@ pub fn create_pipeline(
         ..Default::default()
     });
 
-    let perturbation_shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
+    let shader = device.create_shader_module(wgpu::include_wgsl!("shaders/mandelbrot.wgsl"));
 
     // Metal uses Bgra, so the shader might need to swap the channels.
     let needs_swap = matches!(
@@ -224,7 +219,7 @@ pub fn create_pipeline(
         label: None,
         layout: Some(&pipeline_layout),
         vertex: wgpu::VertexState {
-            module: &perturbation_shader,
+            module: &shader,
             entry_point: Some("vs_main"),
             buffers: &[vertex_buffer_layout],
             compilation_options: wgpu::PipelineCompilationOptions {
@@ -233,7 +228,7 @@ pub fn create_pipeline(
             },
         },
         fragment: Some(wgpu::FragmentState {
-            module: &perturbation_shader,
+            module: &shader,
             entry_point: Some("fs_main"),
             targets: &[Some(surface_format.into())],
             compilation_options: wgpu::PipelineCompilationOptions {
@@ -251,23 +246,6 @@ pub fn create_pipeline(
         multiview_mask: None,
     });
 
-    let texture_desc = wgpu::TextureDescriptor {
-        size: wgpu::Extent3d {
-            width: width as u32,
-            height: height as u32,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: surface_format,
-        usage: wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::RENDER_ATTACHMENT,
-        label: None,
-        view_formats: &[],
-    };
-    let offscreen_texture = device.create_texture(&texture_desc);
-    let offscreen_texture_view = offscreen_texture.create_view(&Default::default());
-
     let (_, buffer_size) = output_buffer_bytes_per_row_and_size(width, height);
     let output_buffer1 = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
@@ -282,6 +260,8 @@ pub fn create_pipeline(
         mapped_at_creation: false,
     });
 
+    let ssaa = SsaaPipeline::new(&device, surface_format, width, height, ssaa);
+
     Pipeline {
         surface,
         device,
@@ -290,15 +270,13 @@ pub fn create_pipeline(
         height,
         //
         pipeline,
+        ssaa,
+        orbit,
         vertex_buffer,
         bind_group,
         uniform_buffer,
-        orbit_buffer,
-        offscreen_texture,
-        offscreen_texture_view,
         output_buffers: [output_buffer1, output_buffer2],
         current_buffer: 0,
-        orbit: Vec::new(),
         zoom: Float::with_val(PRECISION, 0.0),
         x: Float::with_val(PRECISION, 0.0),
         y: Float::with_val(PRECISION, 0.0),
@@ -349,29 +327,16 @@ fn palette_texture(device: &wgpu::Device, queue: &wgpu::Queue, palette: &[Sbgr])
 struct MandelbrotUniform {
     width: u32,
     height: u32,
-    max_iteration: u32,
-    orbit_len: u32,
+    iterations: u32,
     zoom: f32,
     q: i32,
-    _pad: [u32; 2], //
-                    // approx_iteration: u32,
-                    // ax: f32,
-                    // ay: f32,
-                    // bx: f32,
-                    // by: f32,
-                    // cxx: f32,
-                    // cyy: f32,
 }
 
 const VERTICES: &[[f32; 2]] = &[[1.0, 1.0], [-1.0, 1.0], [1.0, -1.0], [-1.0, -1.0]];
 
-fn byte_slice<T>(slice: &[T]) -> &[u8] {
-    unsafe { std::slice::from_raw_parts(slice.as_ptr().cast(), std::mem::size_of_val(slice)) }
-}
-
 pub fn compute_mandelbrot(
     pipeline: &mut Pipeline,
-    max_iteration: usize,
+    iterations: usize,
     zoom: &Float,
     x: &Float,
     y: &Float,
@@ -388,45 +353,9 @@ pub fn compute_mandelbrot(
     pipeline.x.assign(x);
     pipeline.y.assign(y);
 
-    pipeline.orbit.clear();
-    let x0 = x;
-    let y0 = y;
-    let mut x = Float::with_val(PRECISION, 0.0);
-    let mut y = Float::with_val(PRECISION, 0.0);
-    let mut x2 = Float::with_val(PRECISION, 0.0);
-    let mut y2 = Float::with_val(PRECISION, 0.0);
-    let mut xy = Float::with_val(PRECISION, 0.0);
-
-    for _ in 0..max_iteration {
-        let x_exp = x.get_exp().unwrap_or(0);
-        let y_exp = y.get_exp().unwrap_or(0);
-
-        let scale_exp = x_exp.max(y_exp);
-        let scale_exp = if scale_exp < -10000 { 0 } else { scale_exp };
-        let x_shifted = &x / Float::with_val(PRECISION, 2.0).pow(scale_exp);
-        let x_mantissa = x_shifted.to_f32();
-
-        let y_shifted = &y / Float::with_val(PRECISION, 2.0).pow(scale_exp);
-        let y_mantissa = y_shifted.to_f32();
-
-        pipeline.orbit.push(OrbitDelta {
-            dx: x_mantissa,
-            dy: y_mantissa,
-            exponent: scale_exp,
-            _padding: 0,
-        });
-
-        x2.assign(&x * &x);
-        y2.assign(&y * &y);
-        if (&x2 + &y2).complete(PRECISION) > 4.0 {
-            break;
-        }
-        xy.assign(&x * &y);
-        y.assign(&xy * 2.0);
-        y += y0;
-        x.assign(&x2 - &y2);
-        x += x0;
-    }
+    pipeline
+        .orbit
+        .compute_reference_orbit(x, y, zoom, iterations);
 
     let q = zoom.get_exp().unwrap_or(0);
     let mut denom = Float::with_val(PRECISION, 2.0);
@@ -436,19 +365,9 @@ pub fn compute_mandelbrot(
     let args = MandelbrotUniform {
         width: pipeline.width as u32,
         height: pipeline.height as u32,
-        max_iteration: max_iteration as u32,
-        orbit_len: pipeline.orbit.len() as u32,
+        iterations: iterations as u32,
         zoom: zoom.to_f32(),
         q,
-        _pad: [0, 0],
-        //
-        // approx_iteration: approx_iteration as u32,
-        // ax: a.re as f32,
-        // ay: a.im as f32,
-        // bx: b.re as f32,
-        // by: b.im as f32,
-        // cxx: c.re as f32,
-        // cyy: c.im as f32,
     };
 
     let mut staging_belt = wgpu::util::StagingBelt::new(pipeline.device.clone(), 1024);
@@ -460,22 +379,14 @@ pub fn compute_mandelbrot(
             wgpu::BufferSize::new(std::mem::size_of::<MandelbrotUniform>() as u64).unwrap(),
         )
         .copy_from_slice(byte_slice(&[args]));
-    staging_belt
-        .write_buffer(
-            &mut encoder,
-            &pipeline.orbit_buffer,
-            0,
-            wgpu::BufferSize::new(
-                (pipeline.orbit.len() * std::mem::size_of::<OrbitDelta>()) as u64,
-            )
-            .unwrap(),
-        )
-        .copy_from_slice(byte_slice(&pipeline.orbit));
+    pipeline
+        .orbit
+        .write_buffers(&mut encoder, &mut staging_belt, &pipeline.zoom);
 
     let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: None,
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view: &pipeline.offscreen_texture_view,
+            view: pipeline.ssaa.render_target(),
             resolve_target: None,
             ops: wgpu::Operations {
                 load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -494,11 +405,13 @@ pub fn compute_mandelbrot(
     rpass.draw(0..4, 0..1);
     drop(rpass);
 
+    pipeline.ssaa.render_pass(&mut encoder);
+
     if let Some(surface) = &pipeline.surface {
         let surface_texture = surface.get_current_texture().unwrap();
         encoder.copy_texture_to_texture(
             wgpu::TexelCopyTextureInfo {
-                texture: &pipeline.offscreen_texture,
+                texture: pipeline.ssaa.output_texture(),
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
@@ -544,7 +457,7 @@ pub fn stage_frame_pixel_bytes(pipeline: &Pipeline) {
     let (bytes_per_row, _) = output_buffer_bytes_per_row_and_size(pipeline.width, pipeline.height);
     encoder.copy_texture_to_buffer(
         wgpu::TexelCopyTextureInfo {
-            texture: &pipeline.offscreen_texture,
+            texture: pipeline.ssaa.output_texture(),
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
@@ -574,12 +487,14 @@ pub fn frame_pixel_bytes(
 ) -> Vec<u8> {
     let buffer_slice = output_buffer.slice(..);
     buffer_slice.map_async(wgpu::MapMode::Read, |_| {});
+    println!("waiting");
     device
         .poll(wgpu::PollType::Wait {
             submission_index: None,
             timeout: None,
         })
         .unwrap();
+    println!("got it");
 
     let (bytes_per_row, _) = output_buffer_bytes_per_row_and_size(width, height);
     let padded_data = buffer_slice.get_mapped_range();
