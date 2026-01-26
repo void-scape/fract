@@ -163,12 +163,7 @@ impl Orbit {
         }
     }
 
-    pub fn write_buffers(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        staging_belt: &mut wgpu::util::StagingBelt,
-        zoom: &Float,
-    ) {
+    pub fn write_buffers(&self, queue: &wgpu::Queue, zoom: &Float) {
         let (r, rexp) = zoom.to_f32_exp();
         let r = WFloat { m: r, e: rexp };
 
@@ -197,23 +192,8 @@ impl Orbit {
             coefficients: poly_scaled,
         };
 
-        staging_belt
-            .write_buffer(
-                encoder,
-                &self.uniform,
-                0,
-                wgpu::BufferSize::new(std::mem::size_of::<OrbitUniform>() as u64).unwrap(),
-            )
-            .copy_from_slice(byte_slice(&[uniform]));
-        staging_belt
-            .write_buffer(
-                encoder,
-                &self.point_buffer,
-                0,
-                wgpu::BufferSize::new((self.points.len() * std::mem::size_of::<RefPoint>()) as u64)
-                    .unwrap(),
-            )
-            .copy_from_slice(byte_slice(&self.points));
+        queue.write_buffer(&self.uniform, 0, byte_slice(&[uniform]));
+        queue.write_buffer(&self.point_buffer, 0, byte_slice(&self.points));
     }
 }
 

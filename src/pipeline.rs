@@ -370,18 +370,12 @@ pub fn compute_mandelbrot(
         q,
     };
 
-    let mut staging_belt = wgpu::util::StagingBelt::new(pipeline.device.clone(), 1024);
-    staging_belt
-        .write_buffer(
-            &mut encoder,
-            &pipeline.uniform_buffer,
-            0,
-            wgpu::BufferSize::new(std::mem::size_of::<MandelbrotUniform>() as u64).unwrap(),
-        )
-        .copy_from_slice(byte_slice(&[args]));
+    pipeline
+        .queue
+        .write_buffer(&pipeline.uniform_buffer, 0, byte_slice(&[args]));
     pipeline
         .orbit
-        .write_buffers(&mut encoder, &mut staging_belt, &pipeline.zoom);
+        .write_buffers(&pipeline.queue, &pipeline.zoom);
 
     let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: None,
@@ -428,16 +422,12 @@ pub fn compute_mandelbrot(
                 depth_or_array_layers: 1,
             },
         );
-        staging_belt.finish();
         pipeline.queue.submit([encoder.finish()]);
-        staging_belt.recall();
         surface_texture.present();
         return;
     }
 
-    staging_belt.finish();
     pipeline.queue.submit([encoder.finish()]);
-    staging_belt.recall();
 }
 
 fn output_buffer_bytes_per_row_and_size(width: usize, height: usize) -> (usize, usize) {
