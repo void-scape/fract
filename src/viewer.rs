@@ -38,13 +38,26 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
         glazer::Input::Window(WindowEvent::KeyboardInput {
             event:
                 KeyEvent {
-                    physical_key: PhysicalKey::Code(KeyCode::Escape),
+                    physical_key: PhysicalKey::Code(key),
+                    state: glazer::winit::event::ElementState::Pressed,
+                    repeat: false,
                     ..
                 },
             ..
-        }) => {
-            std::process::exit(0);
-        }
+        }) => match key {
+            KeyCode::Escape => {
+                println!("x = \"{}\"", memory.cx.to_string_radix(10, None));
+                println!("y = \"{}\"", memory.cy.to_string_radix(10, None));
+                println!("zoom = \"{}\"\n", memory.zoom.to_string_radix(10, None));
+                std::process::exit(0);
+            }
+            KeyCode::KeyP => {
+                println!("x = \"{}\"", memory.cx.to_string_radix(10, None));
+                println!("y = \"{}\"", memory.cy.to_string_radix(10, None));
+                println!("zoom = \"{}\"\n", memory.zoom.to_string_radix(10, None));
+            }
+            _ => {}
+        },
         glazer::Input::Window(WindowEvent::CursorMoved { position, .. }) => {
             memory.cursor_x = position.x;
             memory.cursor_y = position.y;

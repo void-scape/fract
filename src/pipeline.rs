@@ -447,7 +447,7 @@ fn conservative_render_pass(pipeline: &mut Pipeline) {
     let width = pipeline.ssaa.ssaa_dimension(pipeline.width);
     let height = pipeline.ssaa.ssaa_dimension(pipeline.height);
 
-    let tile_size = 64;
+    let tile_size = 32;
     let xtiles = width.div_ceil(tile_size);
     let ytiles = height.div_ceil(tile_size);
 
