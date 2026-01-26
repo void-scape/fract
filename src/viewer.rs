@@ -1,6 +1,6 @@
-use crate::PRECISION;
+use crate::precision;
 use glazer::winit::{
-    event::{DeviceEvent, ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
+    event::{ElementState, KeyEvent, MouseButton, WindowEvent},
     keyboard::{KeyCode, PhysicalKey},
 };
 use rug::{
@@ -27,13 +27,13 @@ pub struct Memory {
     pub height: usize,
     pub palette: Vec<Sbgr>,
     pub pipeline: Option<crate::pipeline::Pipeline>,
+    pub aspect: Float,
+    pub bwidth: Float,
+    pub bheight: Float,
+    pub rerender: bool,
 }
 
 fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInput<Memory>) {
-    let w = memory.width as f64;
-    let h = memory.height as f64;
-    let aspect = w / h;
-
     match input {
         glazer::Input::Window(WindowEvent::KeyboardInput {
             event:
@@ -67,40 +67,63 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
             button,
             ..
         }) => {
+            let prec = precision(&memory.zoom);
+
             let factor = match button {
                 MouseButton::Left => 0.5,
                 MouseButton::Right => 2.0,
                 _ => return,
             };
 
-            let zs = match button {
-                MouseButton::Left => 1.0,
-                MouseButton::Right => -1.0,
-                _ => return,
-            };
+            let zs = Float::with_val(
+                prec,
+                match button {
+                    MouseButton::Left => 1.0,
+                    MouseButton::Right => -1.0,
+                    _ => return,
+                },
+            );
 
-            let dx = ((memory.cursor_x / w) * 2.0 - 1.0) * aspect * zs;
-            let dy = ((memory.cursor_y / h) * 2.0 - 1.0) * -zs;
-            let dcx = Float::with_val(PRECISION, &memory.zoom * dx);
-            let dcy = Float::with_val(PRECISION, &memory.zoom * dy);
+            let cx = Float::with_val(prec, memory.cursor_x);
+            let cy = Float::with_val(prec, memory.cursor_y);
+            let one = Float::with_val(prec, 1.0);
+            let two = Float::with_val(prec, 2.0);
+
+            let mut dx = Float::with_val(prec, &cx / &memory.bwidth);
+            dx.mul_assign_round(&two, Round::Nearest);
+            dx.sub_assign_round(&one, Round::Nearest);
+            dx.mul_assign_round(&memory.aspect, Round::Nearest);
+            dx.mul_assign_round(&zs, Round::Nearest);
+
+            let mut dy = Float::with_val(prec, &cy / &memory.bheight);
+            dy.mul_assign_round(&two, Round::Nearest);
+            dy.sub_assign_round(&one, Round::Nearest);
+            dy.mul_assign_round(&zs, Round::Nearest);
+            dy.mul_assign_round(-1.0, Round::Nearest);
+
+            let dcx = Float::with_val(prec, &memory.zoom * &dx);
+            let dcy = Float::with_val(prec, &memory.zoom * &dy);
             memory.cx.add_assign_round(dcx, Round::Nearest);
             memory.cy.add_assign_round(dcy, Round::Nearest);
             memory.zoom.mul_assign_round(factor, Round::Nearest);
-        }
-        glazer::Input::Device(DeviceEvent::MouseWheel { delta }) => match delta {
-            MouseScrollDelta::PixelDelta(delta) => {
-                let delta =
-                    delta.y.signum() * (delta.x * delta.x + delta.y * delta.y).sqrt() / h * 10.0;
-                let zd = Float::with_val(PRECISION, delta * &memory.zoom);
 
-                let dx = Float::with_val(PRECISION, ((memory.cursor_x / w) * 2.0 - 1.0) * aspect);
-                let dy = Float::with_val(PRECISION, ((memory.cursor_y / h) * 2.0 - 1.0) * -1.0);
-                memory.cx.add_assign_round(&dx * &zd, Round::Nearest);
-                memory.cy.add_assign_round(&dy * &zd, Round::Nearest);
-                memory.zoom.sub_assign_round(&zd, Round::Nearest);
-            }
-            _ => unimplemented!(),
-        },
+            memory.rerender = true;
+        }
+        // TODO: high precision
+        // glazer::Input::Device(DeviceEvent::MouseWheel { delta }) => match delta {
+        //     MouseScrollDelta::PixelDelta(delta) => {
+        //         let delta =
+        //             delta.y.signum() * (delta.x * delta.x + delta.y * delta.y).sqrt() / h * 10.0;
+        //         let zd = Float::with_val(PRECISION, delta * &memory.zoom);
+        //
+        //         let dx = Float::with_val(PRECISION, ((memory.cursor_x / w) * 2.0 - 1.0) * aspect);
+        //         let dy = Float::with_val(PRECISION, ((memory.cursor_y / h) * 2.0 - 1.0) * -1.0);
+        //         memory.cx.add_assign_round(&dx * &zd, Round::Nearest);
+        //         memory.cy.add_assign_round(&dy * &zd, Round::Nearest);
+        //         memory.zoom.sub_assign_round(&zd, Round::Nearest);
+        //     }
+        //     _ => unimplemented!(),
+        // },
         _ => {}
     }
 }
@@ -120,11 +143,15 @@ fn update_and_render(
             false,
         )
     });
-    crate::pipeline::compute_mandelbrot(
-        pipeline,
-        memory.iterations,
-        &memory.zoom,
-        &memory.cx,
-        &memory.cy,
-    );
+
+    if memory.rerender {
+        memory.rerender = false;
+        crate::pipeline::compute_mandelbrot(
+            pipeline,
+            memory.iterations,
+            &mut memory.zoom,
+            &mut memory.cx,
+            &mut memory.cy,
+        );
+    }
 }

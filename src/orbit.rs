@@ -1,6 +1,6 @@
 // Algorithm ported from JS: https://github.com/HastingsGreer/mandeljs/blob/7bb12c6ee2214e4eea82a30498de85823b3be474/main.js#L410
 
-use crate::{PRECISION, byte_slice, pipeline::MAX_ITERATIONS};
+use crate::{byte_slice, pipeline::MAX_ITERATIONS, precision};
 use rug::{Assign, Float, float::Round, ops::AddAssignRound};
 
 /// Reference orbit points and series approximation coefficients.
@@ -48,11 +48,12 @@ impl Orbit {
         self.points.clear();
         self.polylim = 0;
 
-        let mut x = Float::with_val(PRECISION, 0.0);
-        let mut y = Float::with_val(PRECISION, 0.0);
-        let mut txx = Float::with_val(PRECISION, 0.0);
-        let mut txy = Float::with_val(PRECISION, 0.0);
-        let mut tyy = Float::with_val(PRECISION, 0.0);
+        let prec = precision(zoom);
+        let mut x = Float::with_val(prec, 0.0);
+        let mut y = Float::with_val(prec, 0.0);
+        let mut txx = Float::with_val(prec, 0.0);
+        let mut txy = Float::with_val(prec, 0.0);
+        let mut tyy = Float::with_val(prec, 0.0);
 
         let mut bx = WFloat::ZERO;
         let mut by = WFloat::ZERO;
@@ -137,7 +138,7 @@ impl Orbit {
                     mul(
                         WFloat {
                             m: 1000.0,
-                            e: zoom.get_exp().unwrap_or(0) + 50,
+                            e: zoom.get_exp().unwrap_or(0) + 25,
                         },
                         maxabs(tdx, tdy),
                     ),

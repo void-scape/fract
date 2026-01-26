@@ -1,10 +1,10 @@
-use crate::{PRECISION, byte_slice, orbit::Orbit, ssaa::SsaaPipeline};
+use crate::{byte_slice, orbit::Orbit, precision, ssaa::SsaaPipeline};
 use glazer::winit::window::Window;
-use rug::{Assign, Float};
+use rug::Float;
 use tint::Sbgr;
 use wgpu::util::DeviceExt;
 
-pub const MAX_ITERATIONS: usize = 100_000;
+pub const MAX_ITERATIONS: usize = 1_000_000;
 
 pub struct Pipeline {
     surface: Option<wgpu::Surface<'static>>,
@@ -21,9 +21,6 @@ pub struct Pipeline {
     uniform_buffer: wgpu::Buffer,
     pub output_buffers: [wgpu::Buffer; 2],
     pub current_buffer: usize,
-    zoom: Float,
-    x: Float,
-    y: Float,
 }
 
 pub fn create_pipeline(
@@ -277,9 +274,6 @@ pub fn create_pipeline(
         uniform_buffer,
         output_buffers: [output_buffer1, output_buffer2],
         current_buffer: 0,
-        zoom: Float::with_val(PRECISION, 0.0),
-        x: Float::with_val(PRECISION, 0.0),
-        y: Float::with_val(PRECISION, 0.0),
     }
 }
 
@@ -338,17 +332,16 @@ const VERTICES: &[[f32; 2]] = &[[1.0, 1.0], [-1.0, 1.0], [1.0, -1.0], [-1.0, -1.
 pub fn compute_mandelbrot(
     pipeline: &mut Pipeline,
     iterations: usize,
-    zoom: &Float,
-    x: &Float,
-    y: &Float,
+    zoom: &mut Float,
+    x: &mut Float,
+    y: &mut Float,
 ) {
-    if *zoom == pipeline.zoom && *x == pipeline.x && *y == pipeline.y {
-        return;
+    let prec = precision(zoom);
+    if zoom.prec() != prec {
+        zoom.set_prec(prec);
+        x.set_prec(prec);
+        y.set_prec(prec);
     }
-
-    pipeline.zoom.assign(zoom);
-    pipeline.x.assign(x);
-    pipeline.y.assign(y);
 
     pipeline
         .orbit
@@ -367,9 +360,7 @@ pub fn compute_mandelbrot(
     pipeline
         .queue
         .write_buffer(&pipeline.uniform_buffer, 0, byte_slice(&[args]));
-    pipeline
-        .orbit
-        .write_buffers(&pipeline.queue, &pipeline.zoom);
+    pipeline.orbit.write_buffers(&pipeline.queue, zoom);
     pipeline.queue.submit([]);
 
     if iterations > 50_000

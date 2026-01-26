@@ -1,5 +1,5 @@
 use clap::Parser;
-use fract::PRECISION;
+use fract::precision;
 use rug::{
     Float,
     ops::{AddAssignRound, CompleteRound},
@@ -86,25 +86,36 @@ fn main() -> std::io::Result<ExitCode> {
         output(&args, &path, &config, &palette)?;
     }
 
-    let x = Float::parse(config.x).unwrap().complete(PRECISION);
-    let y = Float::parse(config.y).unwrap().complete(PRECISION);
-    let z = Float::parse(config.zoom).unwrap().complete(PRECISION);
+    // TODO: This is stupid
+    let prec = 1024 * 32;
+    let z = Float::parse(config.zoom).unwrap().complete(prec);
+    let prec = precision(&z);
+
+    let x = Float::parse(config.x).unwrap().complete(prec);
+    let y = Float::parse(config.y).unwrap().complete(prec);
     let iterations = config.iterations;
     let width = config.width;
     let height = config.height;
+
+    let w = Float::with_val(prec, width as f32);
+    let h = Float::with_val(prec, height as f32);
 
     if args.viewer {
         fract::viewer::run(fract::viewer::Memory {
             zoom: z,
             cursor_x: 0.0,
             cursor_y: 0.0,
-            cx: Float::with_val(PRECISION, x),
-            cy: Float::with_val(PRECISION, y),
+            cx: Float::with_val(prec, x),
+            cy: Float::with_val(prec, y),
             iterations,
             width,
             height,
             palette,
             pipeline: None,
+            aspect: Float::with_val(prec, &w / &h),
+            bwidth: w,
+            bheight: h,
+            rerender: true,
         });
     }
 
@@ -137,9 +148,12 @@ fn output(
         return Ok(ExitCode::FAILURE);
     }
 
-    let x = Float::parse(&config.x).unwrap().complete(PRECISION);
-    let y = Float::parse(&config.y).unwrap().complete(PRECISION);
-    let mut z = Float::parse(&config.zoom).unwrap().complete(PRECISION);
+    // TODO: This is stupid
+    let prec = 1024 * 32;
+    let mut z = Float::parse(&config.zoom).unwrap().complete(prec);
+    let prec = precision(&z);
+    let mut x = Float::parse(&config.x).unwrap().complete(prec);
+    let mut y = Float::parse(&config.y).unwrap().complete(prec);
     let iterations = config.iterations;
     let width = config.width;
     let height = config.height;
@@ -164,12 +178,12 @@ fn output(
         log.write_all(format!("zoom = \"{}\"\n\n", z.to_string_radix(10, None)).as_bytes())?;
 
         time(0, || {
-            fract::pipeline::compute_mandelbrot(&mut pipeline, iterations, &z, &x, &y);
+            fract::pipeline::compute_mandelbrot(&mut pipeline, iterations, &mut z, &mut x, &mut y);
             let pixels = fract::pipeline::pipeline_frame_pixel_bytes(&pipeline);
             png(output, &pixels, width, height)
         })?;
     } else {
-        let zoom_factor = Float::with_val(PRECISION, args.zoom);
+        let zoom_factor = Float::with_val(prec, args.zoom);
 
         let sample_rate = 48000usize;
         assert!(sample_rate.is_multiple_of(fps));
@@ -179,7 +193,7 @@ fn output(
         let bar = ProgressBar::new(args.frames as u64);
 
         // render first frame
-        fract::pipeline::compute_mandelbrot(&mut pipeline, iterations, &z, &x, &y);
+        fract::pipeline::compute_mandelbrot(&mut pipeline, iterations, &mut z, &mut x, &mut y);
         fract::pipeline::stage_frame_pixel_bytes(&pipeline);
         bar.inc(1);
 
@@ -201,10 +215,16 @@ fn output(
             });
 
             if i < args.frames - 1 {
-                let zoom_delta = Float::with_val(PRECISION, &z * &zoom_factor);
+                let zoom_delta = Float::with_val(prec, &z * &zoom_factor);
                 z.add_assign_round(zoom_delta, rug::float::Round::Nearest);
                 pipeline.current_buffer = write_idx;
-                fract::pipeline::compute_mandelbrot(&mut pipeline, iterations, &z, &x, &y);
+                fract::pipeline::compute_mandelbrot(
+                    &mut pipeline,
+                    iterations,
+                    &mut z,
+                    &mut x,
+                    &mut y,
+                );
                 fract::pipeline::stage_frame_pixel_bytes(&pipeline);
                 bar.inc(1);
             }
