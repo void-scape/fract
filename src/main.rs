@@ -164,7 +164,6 @@ fn output(
         log.write_all(format!("zoom = \"{}\"\n\n", z.to_string_radix(10, None)).as_bytes())?;
 
         time(0, || {
-            println!("rendering");
             fract::pipeline::compute_mandelbrot(&mut pipeline, iterations, &z, &x, &y);
             let pixels = fract::pipeline::pipeline_frame_pixel_bytes(&pipeline);
             png(output, &pixels, width, height)
@@ -197,9 +196,9 @@ fn output(
 
             let device = pipeline.device.clone();
             let read_buffer = pipeline.output_buffers[read_idx].clone();
-            let pixels = std::thread::spawn(move || {
-                fract::pipeline::frame_pixel_bytes(&device, &read_buffer, width, height)
-            });
+            // let pixels = std::thread::spawn(move || {
+            let pixels = fract::pipeline::frame_pixel_bytes(&device, &read_buffer, width, height);
+            // });
 
             if i < args.frames - 1 {
                 let zoom_delta = Float::with_val(PRECISION, &z * &zoom_factor);
@@ -210,7 +209,7 @@ fn output(
                 bar.inc(1);
             }
 
-            let pixels = pixels.join().expect("Render thread panicked");
+            // let pixels = pixels.join().expect("Render thread panicked");
             encoder.render_frame(&pixels, &samples)?;
         }
 

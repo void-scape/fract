@@ -487,14 +487,12 @@ pub fn frame_pixel_bytes(
 ) -> Vec<u8> {
     let buffer_slice = output_buffer.slice(..);
     buffer_slice.map_async(wgpu::MapMode::Read, |_| {});
-    println!("waiting");
     device
         .poll(wgpu::PollType::Wait {
             submission_index: None,
             timeout: None,
         })
         .unwrap();
-    println!("got it");
 
     let (bytes_per_row, _) = output_buffer_bytes_per_row_and_size(width, height);
     let padded_data = buffer_slice.get_mapped_range();
