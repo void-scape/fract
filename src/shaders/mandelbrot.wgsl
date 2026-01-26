@@ -14,6 +14,8 @@ struct OrbitUniform {
 	b: f32,
 	c: f32,
 	d: f32,
+	e: f32,
+	f: f32,
 }
 
 struct RefPoint {
@@ -62,8 +64,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 	
 	let cux = dcx * sqrx - dcy * sqry;
 	let cuy = dcx * sqry + dcy * sqrx;
-	var dx = orbit.a * dcx - orbit.b * dcy + orbit.c * sqrx - orbit.d * sqry;
-	var dy = orbit.a * dcy + orbit.b * dcx + orbit.c * sqry + orbit.d * sqrx;
+	var dx = orbit.a * dcx - orbit.b * dcy + orbit.c * sqrx - orbit.d * sqry + orbit.e * cux - orbit.f * cuy;
+	var dy = orbit.a * dcy + orbit.b * dcx + orbit.c * sqry + orbit.d * sqrx + orbit.e * cuy + orbit.f * cux;
 
 	var k = i32(orbit.polylim);
 	var j = k;

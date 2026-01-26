@@ -1,6 +1,6 @@
 use crate::{PRECISION, byte_slice, orbit::Orbit, ssaa::SsaaPipeline};
 use glazer::winit::window::Window;
-use rug::{Assign, Float, ops::PowAssign};
+use rug::{Assign, Float};
 use tint::Sbgr;
 use wgpu::util::DeviceExt;
 
@@ -330,6 +330,7 @@ struct MandelbrotUniform {
     iterations: u32,
     zoom: f32,
     q: i32,
+    _pad: [u32; 3],
 }
 
 const VERTICES: &[[f32; 2]] = &[[1.0, 1.0], [-1.0, 1.0], [1.0, -1.0], [-1.0, -1.0]];
@@ -353,17 +354,14 @@ pub fn compute_mandelbrot(
         .orbit
         .compute_reference_orbit(x, y, zoom, iterations);
 
-    let q = zoom.get_exp().unwrap_or(0);
-    let mut denom = Float::with_val(PRECISION, 2.0);
-    denom.pow_assign(q);
-    let z = Float::with_val(PRECISION, zoom / denom);
-
+    let (zm, q) = zoom.to_f32_exp();
     let args = MandelbrotUniform {
         width: pipeline.width as u32,
         height: pipeline.height as u32,
         iterations: iterations as u32,
-        zoom: z.to_f32(),
+        zoom: zm,
         q,
+        _pad: [0; 3],
     };
 
     pipeline

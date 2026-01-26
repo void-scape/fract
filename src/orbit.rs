@@ -137,7 +137,7 @@ impl Orbit {
                     mul(
                         WFloat {
                             m: 1000.0,
-                            e: zoom.get_exp().unwrap_or(0),
+                            e: zoom.get_exp().unwrap_or(0) + 100,
                         },
                         maxabs(tdx, tdy),
                     ),
@@ -157,10 +157,12 @@ impl Orbit {
                 not_failed = false;
             }
 
-            if gt(add(mul(fx, fx), mul(fy, fy)), WFloat { m: 400000.0, e: 0 }) {
+            if gt(add(mul(fx, fx), mul(fy, fy)), WFloat { m: 400.0, e: 0 }) {
                 break;
             }
         }
+
+        println!("{}", self.polylim);
     }
 
     pub fn write_buffers(&self, queue: &wgpu::Queue, zoom: &Float) {
@@ -182,6 +184,8 @@ impl Orbit {
             mul(poly_scale, self.coefficients[1]),
             mul(poly_scale, mul(r, self.coefficients[2])),
             mul(poly_scale, mul(r, self.coefficients[3])),
+            mul(poly_scale, mul(r, mul(r, self.coefficients[4]))),
+            mul(poly_scale, mul(r, mul(r, self.coefficients[5]))),
         ]
         .map(|d| d.m * 2f32.powi(d.e));
 
@@ -273,5 +277,5 @@ struct OrbitUniform {
     points: u32,
     polylim: u32,
     poly_scale_exponent: i32,
-    coefficients: [f32; 4],
+    coefficients: [f32; 6],
 }
