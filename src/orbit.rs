@@ -137,7 +137,7 @@ impl Orbit {
                     mul(
                         WFloat {
                             m: 1000.0,
-                            e: zoom.get_exp().unwrap_or(0) + 100,
+                            e: zoom.get_exp().unwrap_or(0) + 50,
                         },
                         maxabs(tdx, tdy),
                     ),
@@ -161,8 +161,6 @@ impl Orbit {
                 break;
             }
         }
-
-        println!("{}", self.polylim);
     }
 
     pub fn write_buffers(&self, queue: &wgpu::Queue, zoom: &Float) {
