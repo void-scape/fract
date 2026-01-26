@@ -345,10 +345,6 @@ pub fn compute_mandelbrot(
         return;
     }
 
-    let mut encoder = pipeline
-        .device
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-
     pipeline.zoom.assign(zoom);
     pipeline.x.assign(x);
     pipeline.y.assign(y);
@@ -360,13 +356,13 @@ pub fn compute_mandelbrot(
     let q = zoom.get_exp().unwrap_or(0);
     let mut denom = Float::with_val(PRECISION, 2.0);
     denom.pow_assign(q);
-    let zoom = Float::with_val(PRECISION, zoom / denom);
+    let z = Float::with_val(PRECISION, zoom / denom);
 
     let args = MandelbrotUniform {
         width: pipeline.width as u32,
         height: pipeline.height as u32,
         iterations: iterations as u32,
-        zoom: zoom.to_f32(),
+        zoom: z.to_f32(),
         q,
     };
 
@@ -376,28 +372,44 @@ pub fn compute_mandelbrot(
     pipeline
         .orbit
         .write_buffers(&pipeline.queue, &pipeline.zoom);
+    pipeline.queue.submit([]);
 
-    let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: None,
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view: pipeline.ssaa.render_target(),
-            resolve_target: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                store: wgpu::StoreOp::Store,
-            },
-            depth_slice: None,
-        })],
-        depth_stencil_attachment: None,
-        timestamp_writes: None,
-        occlusion_query_set: None,
-        multiview_mask: None,
-    });
-    rpass.set_pipeline(&pipeline.pipeline);
-    rpass.set_bind_group(0, &pipeline.bind_group, &[]);
-    rpass.set_vertex_buffer(0, pipeline.vertex_buffer.slice(..));
-    rpass.draw(0..4, 0..1);
-    drop(rpass);
+    if iterations > 50_000
+        || (pipeline.width * pipeline.height >= 1000 * 1000 && pipeline.ssaa.enabled())
+        || (pipeline.width * pipeline.height >= 2560 * 1440)
+    {
+        conservative_render_pass(pipeline);
+    } else {
+        let mut encoder = pipeline
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+
+        // NOTE: Being very cautious here about the watch dog timer killing this render,
+        // so this gets its own queue.
+        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: None,
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: pipeline.ssaa.render_target(),
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            ..Default::default()
+        });
+        rpass.set_pipeline(&pipeline.pipeline);
+        rpass.set_bind_group(0, &pipeline.bind_group, &[]);
+        rpass.set_vertex_buffer(0, pipeline.vertex_buffer.slice(..));
+        rpass.draw(0..4, 0..1);
+        drop(rpass);
+        pipeline.queue.submit([encoder.finish()]);
+    }
+
+    let mut encoder = pipeline
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
     pipeline.ssaa.render_pass(&mut encoder);
 
@@ -426,8 +438,57 @@ pub fn compute_mandelbrot(
         surface_texture.present();
         return;
     }
-
     pipeline.queue.submit([encoder.finish()]);
+}
+
+// NOTE: Being VERY cautious here about the watch dog timer killing this render,
+// so this gets split into little tiny blocks.
+//
+// Might just use this by default...
+fn conservative_render_pass(pipeline: &mut Pipeline) {
+    let width = pipeline.ssaa.ssaa_dimension(pipeline.width);
+    let height = pipeline.ssaa.ssaa_dimension(pipeline.height);
+
+    let tile_size = 256;
+    let xtiles = width.div_ceil(tile_size);
+    let ytiles = height.div_ceil(tile_size);
+
+    for ty in 0..ytiles {
+        for tx in 0..xtiles {
+            let x = (tx * tile_size) as u32;
+            let y = (ty * tile_size) as u32;
+
+            let w = (tile_size as u32).min(width as u32 - x);
+            let h = (tile_size as u32).min(height as u32 - y);
+
+            let mut encoder = pipeline
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: pipeline.ssaa.render_target(),
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                ..Default::default()
+            });
+
+            rpass.set_pipeline(&pipeline.pipeline);
+            rpass.set_bind_group(0, &pipeline.bind_group, &[]);
+            rpass.set_vertex_buffer(0, pipeline.vertex_buffer.slice(..));
+            rpass.set_scissor_rect(x, y, w, h);
+            rpass.draw(0..4, 0..1);
+            drop(rpass);
+
+            pipeline.queue.submit(Some(encoder.finish()));
+        }
+    }
 }
 
 fn output_buffer_bytes_per_row_and_size(width: usize, height: usize) -> (usize, usize) {

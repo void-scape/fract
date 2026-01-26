@@ -149,6 +149,18 @@ impl SsaaPipeline {
         }
     }
 
+    pub fn enabled(&self) -> bool {
+        self.data.is_some()
+    }
+
+    pub fn ssaa_dimension(&self, d: usize) -> usize {
+        if self.enabled() {
+            d * SSAA_SAMPLES as usize
+        } else {
+            d
+        }
+    }
+
     /// Texture view that the mandelbrot should be rendered to.
     pub fn render_target(&self) -> &wgpu::TextureView {
         match &self.data {
