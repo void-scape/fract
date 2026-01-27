@@ -1,30 +1,32 @@
 struct MandelbrotUniform {
     iterations: u32,
-    zm: f32,
-    ze: i32,
+    zm: f32, ze: i32,
 }
 
 struct OrbitUniform {
     points: u32,
     polylim: u32,
 	poly_scale_exponent: i32,
-	a: f32,
-	b: f32,
-	c: f32,
-	d: f32,
-	e: f32,
-	f: f32,
+	a: f32, b: f32,
+	c: f32, d: f32,
+	e: f32, f: f32,
 }
 
 struct RefPoint {
-	x: f32,
-	y: f32,
-	e: i32,
-	_pad: u32,
+	x: f32, y: f32, e: i32,
+}
+
+struct OrbitState {
+    dx: f32, dy: f32,
+    j: u32, k: i32,
+    q: i32, finished: u32,
 }
 
 @group(0) @binding(0) var output: texture_storage_2d<rgba32float, write>;
 @group(0) @binding(1) var<uniform> args: MandelbrotUniform;
+@group(0) @binding(2) var<storage, read_write> states: array<OrbitState>;
+@group(0) @binding(3) var<storage, read_write> remaining: atomic<u32>;
+var<workgroup> wg_remaining: atomic<u32>;
 
 @group(1) @binding(0) var<uniform> orbit: OrbitUniform;
 @group(1) @binding(1) var<storage, read> points: array<RefPoint>;
@@ -34,51 +36,90 @@ override SWAP_CHANNELS: bool = false;
 @group(2) @binding(1) var palette_sampler: sampler;
 
 @compute @workgroup_size(16, 16)
-fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) local_id: u32) {
+	if (local_id == 0u) {
+        atomicStore(&wg_remaining, 0u);
+    }
+	workgroupBarrier();
+
     let sz = textureDimensions(output);
     if (id.x >= sz.x || id.y >= sz.y) { return; }
     let aspect = f32(sz.x) / f32(sz.y);
     var uv = vec2<f32>(f32(id.x) * aspect, f32(sz.y - id.y)) / vec2<f32>(sz.xy) * 2.0 - 1.0;
-    textureStore(output, id.xy, mandel(uv * args.zm * 2.0));
+	let state_index = id.y * sz.x + id.x;
+    textureStore(output, id.xy, mandelbrot(state_index, uv * args.zm * 2.0));
+
+	if (states[state_index].finished == 0u) {
+        atomicAdd(&wg_remaining, 1u);
+    }
+
+	workgroupBarrier();
+	if (local_id == 0u) {
+        let count = atomicLoad(&wg_remaining);
+        if (count > 0u) {
+            atomicAdd(&remaining, count);
+        }
+    }
 }
 
 // I am not going to pretend to understand this code: 
 // https://github.com/HastingsGreer/mandeljs/blob/7bb12c6ee2214e4eea82a30498de85823b3be474/main.js#L198
-fn mandel(delta: vec2<f32>) -> vec4<f32> {
-	var q = args.ze - 1;
-	let cq = q;
-	q = q + orbit.poly_scale_exponent;
-	var S = pow(2.0, f32(q));
-	var dcx = delta.x;
-	var dcy = delta.y;
+fn mandelbrot(state_index: u32, delta: vec2<f32>) -> vec4<f32> {
+	var state = states[state_index];
 
-	// dx + dyi = (p0 + p1 i) * (dcx, dcy) + (p2 + p3i) * (dcx + dcy * i) * (dcx + dcy * i)
-	let sqrx = dcx * dcx - dcy * dcy;
-	let sqry = 2.0 * dcx * dcy;
-	
-	let cux = dcx * sqrx - dcy * sqry;
-	let cuy = dcx * sqry + dcy * sqrx;
-	var dx = orbit.a * dcx - orbit.b * dcy + orbit.c * sqrx - orbit.d * sqry + orbit.e * cux - orbit.f * cuy;
-	var dy = orbit.a * dcy + orbit.b * dcx + orbit.c * sqry + orbit.d * sqrx + orbit.e * cuy + orbit.f * cux;
+	if (state.finished == 1u) {
+        let x = points[state.k].x;
+        let y = points[state.k].y;
+        let S = exp2(f32(state.q));
+        let fx = x * exp2(f32(points[state.k].e)) + S * state.dx;
+        let fy = y * exp2(f32(points[state.k].e)) + S * state.dy;
+        return iteration_to_rgb(state.j, fx, fy);
+    }
 
-	var k = i32(orbit.polylim);
-	var j = k;
+	var dx = state.dx;
+    var dy = state.dy;
+    var j  = i32(state.j);
+    var k  = state.k;
+    var q  = state.q;
+    let cq = args.ze - 1;
+
+	if (j == 0) {
+        q = cq + orbit.poly_scale_exponent;
+        k = i32(orbit.polylim);
+        j = k;
+        
+        let dcx_init = delta.x;
+        let dcy_init = delta.y;
+        let sqrx = dcx_init * dcx_init - dcy_init * dcy_init;
+        let sqry = 2.0 * dcx_init * dcy_init;
+        let cux = dcx_init * sqrx - dcy_init * sqry;
+        let cuy = dcx_init * sqry + dcy_init * sqrx;
+        
+        dx = orbit.a * dcx_init - orbit.b * dcy_init + orbit.c * sqrx - orbit.d * sqry + orbit.e * cux - orbit.f * cuy;
+        dy = orbit.a * dcy_init + orbit.b * dcx_init + orbit.c * sqry + orbit.d * sqrx + orbit.e * cuy + orbit.f * cux;
+    }
+
+	var S = exp2(f32(q));
+    var dcx = delta.x * exp2(f32(-q + cq));
+    var dcy = delta.y * exp2(f32(-q + cq));
 
 	var x = points[k].x;
 	var y = points[k].y;
 
-	var s1 = 0.0;
-	var s2 = 0.0;
-    let stripe_density = 10.0;
+	var x0 = points[0].x;
+	var y0 = points[0].y;
+	var prev_pt = points[k];
+	var current_pt = points[k + 1];
 
-	for (var i = k; i < i32(args.iterations); i++) {
+	let batch_limit = j + 5000;
+	while (j < batch_limit && j < i32(args.iterations)) {
 		j += 1;
 		k += 1;
 
-		let os = points[k - 1].e;
-		dcx = delta.x * pow(2.0, f32(-q + cq - os));
-		dcy = delta.y * pow(2.0, f32(-q + cq - os));
-		var unS = pow(2.0, f32(q) - f32(os));
+		let os = prev_pt.e;
+		dcx = delta.x * exp2(f32(-q + cq - os));
+		dcy = delta.y * exp2(f32(-q + cq - os));
+		var unS = exp2(f32(q) - f32(os));
 
 		if (abs(unS) > 3.4028235e34) {
 			unS = 0.0;
@@ -89,17 +130,18 @@ fn mandel(delta: vec2<f32>) -> vec4<f32> {
 		dx = tx;
 
 		q = q + os;
-		S = pow(2.0, f32(q));
+		S = exp2(f32(q));
 
-		x = points[k].x;
-		y = points[k].y;
-		let fx = x * pow(2.0, f32(points[k].e)) + S * dx;
-		let fy = y * pow(2.0, f32(points[k].e)) + S * dy;
+		current_pt = points[k];
+		x = current_pt.x;
+		y = current_pt.y;
+		let fx = x * exp2(f32(current_pt.e)) + S * dx;
+		let fy = y * exp2(f32(current_pt.e)) + S * dy;
 
-		s2 = s1;
-		s1 += 0.5 * sin(stripe_density * atan2(fy, fx)) + 0.5;
+		prev_pt = current_pt;
 
 		if (fx * fx + fy * fy > 10000.0) {
+			state.finished = 1u;
 			break;
 		}
 
@@ -107,9 +149,9 @@ fn mandel(delta: vec2<f32>) -> vec4<f32> {
 			dx = dx / 2.0;
 			dy = dy / 2.0;
 			q = q + 1;
-			S = pow(2.0, f32(q));
-			dcx = delta.x * pow(2.0, f32(-q + cq));
-			dcy = delta.y * pow(2.0, f32(-q + cq));
+			S = exp2(f32(q));
+			dcx = delta.x * exp2(f32(-q + cq));
+			dcy = delta.y * exp2(f32(-q + cq));
 		}
 
 		if (
@@ -119,20 +161,34 @@ fn mandel(delta: vec2<f32>) -> vec4<f32> {
 			dx = fx;
 			dy = fy;
 			q = 0;
-			S = pow(2.0, f32(q));
-			dcx = delta.x * pow(2.0, f32(-q + cq));
-			dcy = delta.y * pow(2.0, f32(-q + cq));
+			S = exp2(f32(q));
+			dcx = delta.x * exp2(f32(-q + cq));
+			dcy = delta.y * exp2(f32(-q + cq));
 			k = 0;
-			x = points[0].x;
-			y = points[0].y;
+			x = x0;
+			y = y0;
 		}
 	}
 
+	if (j >= i32(args.iterations)) {
+        state.finished = 1u;
+    }
+
+	state.dx = dx;
+    state.dy = dy;
+    state.j = u32(j);
+    state.k = k;
+    state.q = q;
+    states[state_index] = state;
+
+	if (state.finished == 0u) {
+        atomicAdd(&remaining, 1u);
+    }
+
 	x = points[k].x;
 	y = points[k].y;
-	let fx = x * pow(2.0, f32(points[k].e)) + S * dx;
-	let fy = y * pow(2.0, f32(points[k].e)) + S * dy;
-	// return not_quite_stripes(u32(j), fx, fy, s1, s2);
+	let fx = x * exp2(f32(points[k].e)) + S * dx;
+	let fy = y * exp2(f32(points[k].e)) + S * dy;
  	return iteration_to_rgb(u32(j), fx, fy);
 }
 
@@ -149,32 +205,4 @@ fn iteration_to_rgb(iteration: u32, x: f32, y: f32) -> vec4<f32> {
 	let uv = vec2(iter / 100.0, 0.5);
 	let rgb = textureSampleLevel(palette, palette_sampler, uv, 0.0).rgb;
     return vec4(select(rgb.bgr, rgb, SWAP_CHANNELS), 1.0);
-}
-
-fn not_quite_stripes(iteration: u32, x: f32, y: f32, s1: f32, s2: f32) -> vec4<f32> {
-    if (iteration == args.iterations) {
-        return vec4(0.0, 0.0, 0.0, 1.0);
-    }
-
-    let zn = dot(vec2(x, y), vec2(x, y));
-    let nu = log2(log2(zn) * 0.5);
-    let iter = f32(iteration) + 1.0 - nu;
-
-	let stripe = mix(s1, s2, nu);
-
-    let avg_stripe = stripe / iter; 
-    let uv_x = (iter / 24.0) + (avg_stripe * 0.5); 
-    let rgb = textureSampleLevel(palette, palette_sampler, vec2(uv_x, 0.5), 0.0).rgb;
-    return vec4(select(rgb.bgr, rgb, SWAP_CHANNELS), 1.0);
-}
-
-fn stripe_to_rgb(iteration: u32, x: f32, y: f32, s1: f32, s2: f32) -> vec4<f32> {
-	if (iteration >= args.iterations) {
-        return vec4(0.0, 0.0, 0.0, 1.0);
-    }
-
-    let nu = log2(log2(x * x + y * y) / log2(10000.0)); 
-    let mx = mix(s1 / f32(iteration), s2 / f32(iteration - 1), nu);
-    let iter = f32(iteration) + 1.0 - nu;
-	return vec4(mx, mx, mx, 1.0);
 }

@@ -1,6 +1,6 @@
 use crate::{config::Config, pipeline::Pipeline, precision};
 use glazer::winit::{
-    event::{ElementState, KeyEvent, MouseButton, WindowEvent},
+    event::{DeviceEvent, ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
     keyboard::{KeyCode, PhysicalKey},
 };
 use rug::{
@@ -137,21 +137,19 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
                 z.mul_assign_round(factor, Round::Nearest);
             });
         }
-        // TODO: high precision
-        // glazer::Input::Device(DeviceEvent::MouseWheel { delta }) => match delta {
-        //     MouseScrollDelta::PixelDelta(delta) => {
-        //         let delta =
-        //             delta.y.signum() * (delta.x * delta.x + delta.y * delta.y).sqrt() / h * 10.0;
-        //         let zd = Float::with_val(PRECISION, delta * &memory.zoom);
-        //
-        //         let dx = Float::with_val(PRECISION, ((memory.cursor_x / w) * 2.0 - 1.0) * aspect);
-        //         let dy = Float::with_val(PRECISION, ((memory.cursor_y / h) * 2.0 - 1.0) * -1.0);
-        //         memory.cx.add_assign_round(&dx * &zd, Round::Nearest);
-        //         memory.cy.add_assign_round(&dy * &zd, Round::Nearest);
-        //         memory.zoom.sub_assign_round(&zd, Round::Nearest);
-        //     }
-        //     _ => unimplemented!(),
-        // },
+        glazer::Input::Device(DeviceEvent::MouseWheel { delta }) => match delta {
+            MouseScrollDelta::PixelDelta(delta) => {
+                let Some(pipeline) = memory.pipeline.as_mut() else {
+                    return;
+                };
+
+                pipeline.write_position(|_, _, z| {
+                    let sensitivity = 0.005;
+                    z.mul_assign_round((-delta.y * sensitivity).exp(), Round::Nearest);
+                });
+            }
+            _ => unimplemented!(),
+        },
         _ => {}
     }
 }
@@ -182,6 +180,6 @@ fn update_and_render(
         )
     });
 
-    pipeline.compute_mandelbrot(memory.config.iterations);
+    pipeline.step_mandelbrot(memory.config.iterations);
     pipeline.present();
 }

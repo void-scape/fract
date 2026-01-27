@@ -1,5 +1,6 @@
 use clap::Parser;
 use fract::{config::Config, palette::parse_palette, pipeline::Pipeline, precision};
+use indicatif::ProgressBar;
 use rug::{
     Float,
     ops::{AddAssignRound, CompleteRound},
@@ -106,27 +107,35 @@ fn output(
     let fps = 30;
 
     if args.frames == 1 {
+        let pixels = pipeline.total_pixels();
+        let bar = ProgressBar::new(pixels as u64);
+        bar.set_position(0);
+
+        let mut passes = 0;
+        time(0, || {
+            while !pipeline.finished() {
+                let remaining = pipeline.step_mandelbrot_headless(iterations);
+                bar.set_position((pixels - remaining as usize) as u64);
+                passes += 1;
+            }
+            pipeline.render_output();
+            let pixels = pipeline.read_output_buffer_bytes();
+            png(output, &pixels, width, height)
+        })?;
+
         pipeline.read_position(|x, y, z| {
-            log.write_all(b"[FRAME] 0\n")?;
+            log.write_all(format!("[FRAME] 0 ({passes} passes)\n").as_bytes())?;
             log.write_all(format!("x = \"{}\"\n", x.to_string_radix(10, None)).as_bytes())?;
             log.write_all(format!("y = \"{}\"\n", y.to_string_radix(10, None)).as_bytes())?;
             log.write_all(format!("zoom = \"{}\"\n\n", z.to_string_radix(10, None)).as_bytes())
         })?;
-
-        time(0, || {
-            pipeline.compute_mandelbrot(iterations);
-            let pixels = pipeline.read_output_buffer_bytes();
-            png(output, &pixels, width, height)
-        })?;
     } else {
+        let bar = ProgressBar::new(args.frames as u64);
         let zoom_factor = Float::with_val(prec, args.zoom);
 
         let sample_rate = 48000usize;
         assert!(sample_rate.is_multiple_of(fps));
         let samples = vec![(0.0, 0.0); sample_rate / fps];
-
-        use indicatif::ProgressBar;
-        let bar = ProgressBar::new(args.frames as u64);
 
         let mut encoder = Encoder::new(data_root, width, height, fps, sample_rate)?;
         for i in 0..args.frames {
@@ -141,7 +150,10 @@ fn output(
                 let zoom_delta = Float::with_val(prec, &*z * &zoom_factor);
                 z.add_assign_round(zoom_delta, rug::float::Round::Nearest);
             });
-            pipeline.compute_mandelbrot(iterations);
+            while !pipeline.finished() {
+                pipeline.step_mandelbrot_headless(iterations);
+            }
+            pipeline.render_output();
             let pixels = pipeline.read_output_buffer_bytes();
             bar.inc(1);
             encoder.render_frame(&pixels, &samples)?;

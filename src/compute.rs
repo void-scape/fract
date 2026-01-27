@@ -1,9 +1,10 @@
 use crate::{byte_slice, orbit::Orbit, palette::Palette, ssaa::SsaaPipeline};
 use rug::Float;
+use std::num::NonZeroU64;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-struct ComputeUniform {
+struct MandelbrotUniform {
     iterations: u32,
     zm: f32,
     ze: i32,
@@ -11,12 +12,16 @@ struct ComputeUniform {
 
 /// Perform iterative mandelbrot computation in a compute shader.
 ///
-/// Each dispatch will increment the orbit of each pixel up to a certain threshold
+/// Every frame will increment the orbit of each pixel up to a certain threshold
 /// in order to prevent the device from timing out.
 pub struct ComputePipeline {
     pipeline: wgpu::ComputePipeline,
     bind_group: wgpu::BindGroup,
-    uniform_buffer: wgpu::Buffer,
+    uniform: wgpu::Buffer,
+    pixel_state: wgpu::Buffer,
+    pixel_state_bytes: u64,
+    remaining: wgpu::Buffer,
+    remaining_stage: wgpu::Buffer,
 }
 
 impl ComputePipeline {
@@ -24,11 +29,38 @@ impl ComputePipeline {
         device: &wgpu::Device,
         surface_format: wgpu::TextureFormat,
         render_target: &wgpu::TextureView,
+        width: usize,
+        height: usize,
+        ssaa: &SsaaPipeline,
     ) -> Self {
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: std::mem::size_of::<ComputeUniform>() as u64,
+            size: std::mem::size_of::<MandelbrotUniform>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let sf = ssaa.ssaa_factor();
+        let pixel_state_bytes = (std::mem::size_of::<f32>() * 6 * width * sf * height * sf) as u64;
+        let pixel_state = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: pixel_state_bytes,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let remaining = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: pixel_state_bytes,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let remaining_stage = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: pixel_state_bytes,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
 
@@ -55,6 +87,26 @@ impl ComputePipeline {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -68,7 +120,15 @@ impl ComputePipeline {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: uniform_buffer.as_entire_binding(),
+                    resource: uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: pixel_state.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: remaining.as_entire_binding(),
                 },
             ],
         });
@@ -107,25 +167,38 @@ impl ComputePipeline {
         Self {
             pipeline,
             bind_group,
-            uniform_buffer,
+            uniform,
+            pixel_state,
+            pixel_state_bytes,
+            remaining,
+            remaining_stage,
         }
     }
 
     pub fn write_buffers(&self, queue: &wgpu::Queue, iterations: usize, z: &Float) {
         let (zm, ze) = z.to_f32_exp();
         queue.write_buffer(
-            &self.uniform_buffer,
+            &self.uniform,
             0,
-            byte_slice(&[ComputeUniform {
+            byte_slice(&[MandelbrotUniform {
                 iterations: iterations as u32,
                 zm,
                 ze,
             }]),
         );
+        queue
+            .write_buffer_with(
+                &self.pixel_state,
+                0,
+                NonZeroU64::new(self.pixel_state_bytes).unwrap(),
+            )
+            .unwrap()
+            .fill(0);
     }
 
     pub fn compute_mandelbrot(
         &self,
+        queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         orbit: &Orbit,
         palette: &Palette,
@@ -133,6 +206,8 @@ impl ComputePipeline {
         width: usize,
         height: usize,
     ) {
+        queue.write_buffer(&self.remaining, 0, &[0; 4]);
+
         let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: None,
             timestamp_writes: None,
@@ -146,5 +221,24 @@ impl ComputePipeline {
         let x = (width * ssaa_factor).div_ceil(16) as u32;
         let y = (height * ssaa_factor).div_ceil(16) as u32;
         cpass.dispatch_workgroups(x, y, 1);
+    }
+
+    pub fn remaining_pixels(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        mut encoder: wgpu::CommandEncoder,
+    ) -> u32 {
+        encoder.copy_buffer_to_buffer(&self.remaining, 0, &self.remaining_stage, 0, 4);
+        queue.submit([encoder.finish()]);
+
+        let slice = self.remaining_stage.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        let data = slice.get_mapped_range();
+        let remaining = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+        drop(data);
+        self.remaining_stage.unmap();
+        remaining
     }
 }

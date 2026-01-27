@@ -14,7 +14,6 @@ struct RefPoint {
     x: f32,
     y: f32,
     s: i32,
-    _pad: u32,
 }
 
 #[repr(C)]
@@ -157,7 +156,6 @@ impl Orbit {
                 x: fx,
                 y: fy,
                 s: scale_exponent,
-                _pad: 0,
             });
 
             let fx = WFloat {
