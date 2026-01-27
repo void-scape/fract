@@ -210,7 +210,7 @@ impl Orbit {
                     mul(
                         WFloat {
                             m: 1000.0,
-                            e: z.get_exp().unwrap_or(0) + 25,
+                            e: z.get_exp().unwrap_or(0),
                         },
                         maxabs(tdx, tdy),
                     ),

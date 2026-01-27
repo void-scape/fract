@@ -26,7 +26,6 @@ struct OrbitState {
 @group(0) @binding(1) var<uniform> args: MandelbrotUniform;
 @group(0) @binding(2) var<storage, read_write> states: array<OrbitState>;
 @group(0) @binding(3) var<storage, read_write> remaining: atomic<u32>;
-var<workgroup> wg_remaining: atomic<u32>;
 
 @group(1) @binding(0) var<uniform> orbit: OrbitUniform;
 @group(1) @binding(1) var<storage, read> points: array<RefPoint>;
@@ -37,28 +36,14 @@ override SWAP_CHANNELS: bool = false;
 
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) local_id: u32) {
-	if (local_id == 0u) {
-        atomicStore(&wg_remaining, 0u);
-    }
-	workgroupBarrier();
-
     let sz = textureDimensions(output);
     if (id.x >= sz.x || id.y >= sz.y) { return; }
     let aspect = f32(sz.x) / f32(sz.y);
     var uv = vec2<f32>(f32(id.x) * aspect, f32(sz.y - id.y)) / vec2<f32>(sz.xy) * 2.0 - 1.0;
 	let state_index = id.y * sz.x + id.x;
     textureStore(output, id.xy, mandelbrot(state_index, uv * args.zm * 2.0));
-
 	if (states[state_index].finished == 0u) {
-        atomicAdd(&wg_remaining, 1u);
-    }
-
-	workgroupBarrier();
-	if (local_id == 0u) {
-        let count = atomicLoad(&wg_remaining);
-        if (count > 0u) {
-            atomicAdd(&remaining, count);
-        }
+		atomicAdd(&remaining, 1u);
     }
 }
 
@@ -111,7 +96,7 @@ fn mandelbrot(state_index: u32, delta: vec2<f32>) -> vec4<f32> {
 	var prev_pt = points[k];
 	var current_pt = points[k + 1];
 
-	let batch_limit = j + 5000;
+	let batch_limit = j + 250;
 	while (j < batch_limit && j < i32(args.iterations)) {
 		j += 1;
 		k += 1;
@@ -181,10 +166,6 @@ fn mandelbrot(state_index: u32, delta: vec2<f32>) -> vec4<f32> {
     state.q = q;
     states[state_index] = state;
 
-	if (state.finished == 0u) {
-        atomicAdd(&remaining, 1u);
-    }
-
 	x = points[k].x;
 	y = points[k].y;
 	let fx = x * exp2(f32(points[k].e)) + S * dx;
@@ -202,7 +183,10 @@ fn iteration_to_rgb(iteration: u32, x: f32, y: f32) -> vec4<f32> {
     let nu = log2(log2(zn) * 0.5);
     let iter = f32(iteration) + 1.0 - nu;
 
-	let uv = vec2(iter / 100.0, 0.5);
+	let val = log2(iter) / 8.0; 
+    let uv = vec2(val, 0.5);
+	// let uv = vec2(iter / 24.0, 0.5);
+
 	let rgb = textureSampleLevel(palette, palette_sampler, uv, 0.0).rgb;
     return vec4(select(rgb.bgr, rgb, SWAP_CHANNELS), 1.0);
 }
