@@ -39,7 +39,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     let sz = textureDimensions(output);
     if (id.x >= sz.x || id.y >= sz.y) { return; }
     let aspect = f32(sz.x) / f32(sz.y);
-    var uv = vec2<f32>(f32(id.x) * aspect, f32(sz.y - id.y)) / vec2<f32>(sz.xy) * 2.0 - 1.0;
+    var uv = vec2<f32>(f32(id.x), f32(sz.y - id.y)) / vec2<f32>(sz.xy) * 2.0 - 1.0;
+	uv.x *= aspect;
 	let state_index = id.y * sz.x + id.x;
     textureStore(output, id.xy, mandelbrot(state_index, uv * args.zm * 2.0));
 	if (states[state_index].finished == 0u) {
@@ -93,15 +94,13 @@ fn mandelbrot(state_index: u32, delta: vec2<f32>) -> vec4<f32> {
 
 	var x0 = points[0].x;
 	var y0 = points[0].y;
-	var prev_pt = points[k];
-	var current_pt = points[k + 1];
 
-	let batch_limit = j + 250;
+	let batch_limit = j + 1000;
 	while (j < batch_limit && j < i32(args.iterations)) {
 		j += 1;
 		k += 1;
 
-		let os = prev_pt.e;
+		let os = points[k - 1].e;
 		dcx = delta.x * exp2(f32(-q + cq - os));
 		dcy = delta.y * exp2(f32(-q + cq - os));
 		var unS = exp2(f32(q) - f32(os));
@@ -117,13 +116,10 @@ fn mandelbrot(state_index: u32, delta: vec2<f32>) -> vec4<f32> {
 		q = q + os;
 		S = exp2(f32(q));
 
-		current_pt = points[k];
-		x = current_pt.x;
-		y = current_pt.y;
-		let fx = x * exp2(f32(current_pt.e)) + S * dx;
-		let fy = y * exp2(f32(current_pt.e)) + S * dy;
-
-		prev_pt = current_pt;
+		x = points[k].x;
+		y = points[k].y;
+		let fx = x * exp2(f32(points[k].e)) + S * dx;
+		let fy = y * exp2(f32(points[k].e)) + S * dy;
 
 		if (fx * fx + fy * fy > 10000.0) {
 			state.finished = 1u;
