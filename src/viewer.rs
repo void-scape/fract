@@ -180,6 +180,6 @@ fn update_and_render(
         )
     });
 
-    pipeline.step_mandelbrot(memory.config.iterations);
+    pipeline.compute_mandelbrot(memory.config.iterations);
     pipeline.present();
 }

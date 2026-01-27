@@ -19,7 +19,6 @@ pub struct Pipeline {
     orbit: Orbit,
     palette: Palette,
     //
-    finished_render: bool,
     updated_position: bool,
     x: Float,
     y: Float,
@@ -60,7 +59,7 @@ impl Pipeline {
 
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: None,
-            required_features: wgpu::Features::FLOAT32_FILTERABLE,
+            required_features: wgpu::Features::empty(),
             required_limits: adapter.limits(),
             experimental_features: wgpu::ExperimentalFeatures::disabled(),
             memory_hints: wgpu::MemoryHints::MemoryUsage,
@@ -94,15 +93,8 @@ impl Pipeline {
             wgpu::TextureFormat::Rgba8UnormSrgb
         };
 
+        let compute = ComputePipeline::new(&device, surface_format);
         let ssaa = SsaaPipeline::new(&device, surface_format, width, height, ssaa);
-        let compute = ComputePipeline::new(
-            &device,
-            surface_format,
-            ssaa.render_target(),
-            width,
-            height,
-            &ssaa,
-        );
         let orbit = Orbit::new(&device);
         let palette = Palette::new(&device, &queue, palette);
 
@@ -128,17 +120,11 @@ impl Pipeline {
             orbit,
             palette,
             //
-            finished_render: false,
             updated_position: true,
             x,
             y,
             z,
         }
-    }
-
-    pub fn total_pixels(&self) -> usize {
-        let sf = self.ssaa.ssaa_factor();
-        self.width * sf * self.height * sf
     }
 
     pub fn read_position<R>(&mut self, f: impl FnOnce(&Float, &Float, &Float) -> R) -> R {
@@ -160,80 +146,24 @@ impl Pipeline {
         result
     }
 
-    /// Renders pixels with an iteration limit.
-    ///
-    /// Returns the remaining pixels to render.
-    pub fn step_mandelbrot(&mut self, iterations: usize) -> u32 {
-        if self.finished() {
-            return 0;
+    /// Renders the mandelbrot into an offscreen texture.
+    pub fn compute_mandelbrot(&mut self, iterations: usize) {
+        if !self.updated_position {
+            return;
         }
 
-        if self.updated_position {
-            self.updated_position = false;
-            self.orbit
-                .compute_reference_orbit(&self.x, &self.y, &self.z, iterations);
-            self.orbit.write_buffers(&self.queue, &self.z);
-            self.compute.write_buffers(&self.queue, iterations, &self.z);
-        }
+        self.updated_position = false;
+        self.orbit
+            .compute_reference_orbit(&self.x, &self.y, &self.z, iterations);
+        self.orbit.write_buffers(&self.queue, &self.z);
+        self.compute
+            .write_buffers(&self.queue, iterations, &self.z, self.width, self.height);
 
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-        self.compute.compute_mandelbrot(
-            &self.queue,
-            &mut encoder,
-            &self.orbit,
-            &self.palette,
-            &self.ssaa,
-            self.width,
-            self.height,
-        );
-        self.ssaa.render_pass(&mut encoder);
-        let remaining = self
-            .compute
-            .remaining_pixels(&self.device, &self.queue, encoder);
-        self.finished_render = remaining == 0;
-        remaining
-    }
-
-    /// [`Pipeline::step_mandelbrot`] without rendering into the offscreen buffer.
-    pub fn step_mandelbrot_headless(&mut self, iterations: usize) -> u32 {
-        if self.finished() {
-            return 0;
-        }
-
-        if self.updated_position {
-            self.updated_position = false;
-            self.orbit
-                .compute_reference_orbit(&self.x, &self.y, &self.z, iterations);
-            self.orbit.write_buffers(&self.queue, &self.z);
-            self.compute.write_buffers(&self.queue, iterations, &self.z);
-        }
-
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-        self.compute.compute_mandelbrot(
-            &self.queue,
-            &mut encoder,
-            &self.orbit,
-            &self.palette,
-            &self.ssaa,
-            self.width,
-            self.height,
-        );
-        let remaining = self
-            .compute
-            .remaining_pixels(&self.device, &self.queue, encoder);
-        self.finished_render = remaining == 0;
-        remaining
-    }
-
-    /// Renders the mandelbrot into the offscreen buffer.
-    pub fn render_output(&self) {
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        self.compute
+            .compute_mandelbrot(&mut encoder, &self.orbit, &self.palette, &self.ssaa);
         self.ssaa.render_pass(&mut encoder);
         self.queue.submit([encoder.finish()]);
     }
@@ -269,11 +199,6 @@ impl Pipeline {
         );
         self.queue.submit([encoder.finish()]);
         surface_texture.present();
-    }
-
-    /// [`Pipeline`] has rendered all of the pixels for the current position.
-    pub fn finished(&self) -> bool {
-        !self.updated_position && self.finished_render
     }
 
     /// Copy the output buffer into a staging buffer then block while staging

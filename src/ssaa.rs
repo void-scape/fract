@@ -10,7 +10,6 @@ pub struct SsaaPipeline {
     src_view: wgpu::TextureView,
     dst: wgpu::Texture,
     dst_view: wgpu::TextureView,
-    enabled: bool,
 }
 
 impl SsaaPipeline {
@@ -70,10 +69,8 @@ impl SsaaPipeline {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba32Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::STORAGE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             label: None,
             view_formats: &[],
         };
@@ -134,15 +131,6 @@ impl SsaaPipeline {
             src_view,
             dst,
             dst_view,
-            enabled,
-        }
-    }
-
-    pub fn ssaa_factor(&self) -> usize {
-        if self.enabled {
-            SSAA_SAMPLES as usize
-        } else {
-            1
         }
     }
 
