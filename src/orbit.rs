@@ -1,12 +1,38 @@
-// Algorithm ported from JS: https://github.com/HastingsGreer/mandeljs/blob/7bb12c6ee2214e4eea82a30498de85823b3be474/main.js#L410
-
-use crate::{byte_slice, pipeline::MAX_ITERATIONS, precision};
+use crate::{byte_slice, precision};
 use rug::{Assign, Float, float::Round, ops::AddAssignRound};
+
+#[repr(C)]
+struct OrbitUniform {
+    points: u32,
+    polylim: u32,
+    poly_scale_exponent: i32,
+    coefficients: [f32; 6],
+}
+
+#[repr(C)]
+struct RefPoint {
+    x: f32,
+    y: f32,
+    s: i32,
+    _pad: u32,
+}
+
+#[repr(C)]
+#[derive(Default, Clone, Copy)]
+struct WFloat {
+    m: f32,
+    e: i32,
+}
+
+impl WFloat {
+    const ZERO: Self = Self { m: 0.0, e: 0 };
+}
 
 /// Reference orbit points and series approximation coefficients.
 pub struct Orbit {
-    pub point_buffer: wgpu::Buffer,
-    pub uniform: wgpu::Buffer,
+    pub bind_group: wgpu::BindGroup,
+    point_buffer: wgpu::Buffer,
+    uniform: wgpu::Buffer,
     points: Vec<RefPoint>,
     coefficients: [WFloat; 6],
     polylim: usize,
@@ -14,6 +40,8 @@ pub struct Orbit {
 
 impl Orbit {
     pub fn new(device: &wgpu::Device) -> Self {
+        // TODO: This is not true!
+        const MAX_ITERATIONS: usize = 1_000_000;
         let size = std::mem::size_of::<RefPoint>() * MAX_ITERATIONS;
 
         let point_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -29,7 +57,23 @@ impl Orbit {
             mapped_at_creation: false,
         });
 
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &Self::bind_group_layout(device),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: point_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
         Self {
+            bind_group,
             point_buffer,
             uniform,
             points: Vec::with_capacity(size),
@@ -38,17 +82,47 @@ impl Orbit {
         }
     }
 
+    pub fn bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: None,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        })
+    }
+
+    /// Must be called before [`Orbit::write_buffers`].
+    // Algorithm ported from JS: https://github.com/HastingsGreer/mandeljs/blob/7bb12c6ee2214e4eea82a30498de85823b3be474/main.js#L410
     pub fn compute_reference_orbit(
         &mut self,
         x0: &Float,
         y0: &Float,
-        zoom: &Float,
+        z: &Float,
         iterations: usize,
     ) {
         self.points.clear();
         self.polylim = 0;
 
-        let prec = precision(zoom);
+        let prec = precision(z);
         let mut x = Float::with_val(prec, 0.0);
         let mut y = Float::with_val(prec, 0.0);
         let mut txx = Float::with_val(prec, 0.0);
@@ -138,7 +212,7 @@ impl Orbit {
                     mul(
                         WFloat {
                             m: 1000.0,
-                            e: zoom.get_exp().unwrap_or(0) + 25,
+                            e: z.get_exp().unwrap_or(0) + 25,
                         },
                         maxabs(tdx, tdy),
                     ),
@@ -164,8 +238,11 @@ impl Orbit {
         }
     }
 
-    pub fn write_buffers(&self, queue: &wgpu::Queue, zoom: &Float) {
-        let (r, rexp) = zoom.to_f32_exp();
+    /// Uploads point and approximation uniform buffers.
+    ///
+    /// Call [`Orbit::compute_reference_orbit`] first.
+    pub fn write_buffers(&self, queue: &wgpu::Queue, z: &Float) {
+        let (r, rexp) = z.to_f32_exp();
         let r = WFloat { m: r, e: rexp };
 
         let poly_scape_exp = mul(
@@ -198,25 +275,6 @@ impl Orbit {
         queue.write_buffer(&self.uniform, 0, byte_slice(&[uniform]));
         queue.write_buffer(&self.point_buffer, 0, byte_slice(&self.points));
     }
-}
-
-#[repr(C)]
-struct RefPoint {
-    x: f32,
-    y: f32,
-    s: i32,
-    _pad: u32,
-}
-
-#[repr(C)]
-#[derive(Default, Clone, Copy)]
-struct WFloat {
-    m: f32,
-    e: i32,
-}
-
-impl WFloat {
-    const ZERO: Self = Self { m: 0.0, e: 0 };
 }
 
 fn split(a: WFloat, b: WFloat) -> (f32, f32, i32) {
@@ -269,12 +327,4 @@ fn maxabs(a: WFloat, b: WFloat) -> WFloat {
 fn gt(a: WFloat, b: WFloat) -> bool {
     let (am, bm, _) = split(a, b);
     am > bm
-}
-
-#[repr(C)]
-struct OrbitUniform {
-    points: u32,
-    polylim: u32,
-    poly_scale_exponent: i32,
-    coefficients: [f32; 6],
 }

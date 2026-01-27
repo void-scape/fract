@@ -1,4 +1,4 @@
-use crate::precision;
+use crate::{config::Config, pipeline::Pipeline, precision};
 use glazer::winit::{
     event::{ElementState, KeyEvent, MouseButton, WindowEvent},
     keyboard::{KeyCode, PhysicalKey},
@@ -6,31 +6,47 @@ use glazer::winit::{
 use rug::{
     Float,
     float::Round,
-    ops::{AddAssignRound, MulAssignRound, SubAssignRound},
+    ops::{AddAssignRound, CompleteRound, MulAssignRound, SubAssignRound},
 };
-use tint::Sbgr;
 
 pub fn run(memory: Memory) {
-    let width = memory.width;
-    let height = memory.height;
+    let width = memory.config.width;
+    let height = memory.config.height;
     glazer::run(memory, width, height, handle_input, update_and_render, None);
 }
 
 pub struct Memory {
-    pub zoom: Float,
-    pub cursor_x: f64,
-    pub cursor_y: f64,
-    pub cx: Float,
-    pub cy: Float,
-    pub iterations: usize,
-    pub width: usize,
-    pub height: usize,
-    pub palette: Vec<Sbgr>,
-    pub pipeline: Option<crate::pipeline::Pipeline>,
-    pub aspect: Float,
-    pub bwidth: Float,
-    pub bheight: Float,
-    pub rerender: bool,
+    pipeline: Option<Pipeline>,
+    config: Config,
+    cursor_x: f64,
+    cursor_y: f64,
+    aspect: Float,
+    bwidth: Float,
+    bheight: Float,
+}
+
+impl Memory {
+    pub fn from_config(config: Config) -> Self {
+        // TODO: This is stupid
+        let prec = 1024 * 32;
+        let z = Float::parse(&config.zoom).unwrap().complete(prec);
+        let prec = precision(&z);
+
+        let width = config.width;
+        let height = config.height;
+        let w = Float::with_val(prec, width as f32);
+        let h = Float::with_val(prec, height as f32);
+
+        Self {
+            config,
+            cursor_x: 0.0,
+            cursor_y: 0.0,
+            pipeline: None,
+            aspect: Float::with_val(prec, &w / &h),
+            bwidth: w,
+            bheight: h,
+        }
+    }
 }
 
 fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInput<Memory>) {
@@ -46,15 +62,23 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
             ..
         }) => match key {
             KeyCode::Escape => {
-                println!("x = \"{}\"", memory.cx.to_string_radix(10, None));
-                println!("y = \"{}\"", memory.cy.to_string_radix(10, None));
-                println!("zoom = \"{}\"\n", memory.zoom.to_string_radix(10, None));
+                if let Some(pipeline) = memory.pipeline.as_mut() {
+                    pipeline.read_position(|x, y, z| {
+                        println!("x = \"{}\"", x.to_string_radix(10, None));
+                        println!("y = \"{}\"", y.to_string_radix(10, None));
+                        println!("zoom = \"{}\"\n", z.to_string_radix(10, None));
+                    });
+                }
                 std::process::exit(0);
             }
             KeyCode::KeyP => {
-                println!("x = \"{}\"", memory.cx.to_string_radix(10, None));
-                println!("y = \"{}\"", memory.cy.to_string_radix(10, None));
-                println!("zoom = \"{}\"\n", memory.zoom.to_string_radix(10, None));
+                if let Some(pipeline) = memory.pipeline.as_mut() {
+                    pipeline.read_position(|x, y, z| {
+                        println!("x = \"{}\"", x.to_string_radix(10, None));
+                        println!("y = \"{}\"", y.to_string_radix(10, None));
+                        println!("zoom = \"{}\"\n", z.to_string_radix(10, None));
+                    });
+                }
             }
             _ => {}
         },
@@ -67,47 +91,51 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
             button,
             ..
         }) => {
-            let prec = precision(&memory.zoom);
-
-            let factor = match button {
-                MouseButton::Left => 0.5,
-                MouseButton::Right => 2.0,
-                _ => return,
+            let Some(pipeline) = memory.pipeline.as_mut() else {
+                return;
             };
 
-            let zs = Float::with_val(
-                prec,
-                match button {
-                    MouseButton::Left => 1.0,
-                    MouseButton::Right => -1.0,
+            pipeline.write_position(|x, y, z| {
+                let prec = precision(z);
+
+                let factor = match button {
+                    MouseButton::Left => 0.5,
+                    MouseButton::Right => 2.0,
                     _ => return,
-                },
-            );
+                };
 
-            let cx = Float::with_val(prec, memory.cursor_x);
-            let cy = Float::with_val(prec, memory.cursor_y);
-            let one = Float::with_val(prec, 1.0);
-            let two = Float::with_val(prec, 2.0);
+                let zs = Float::with_val(
+                    prec,
+                    match button {
+                        MouseButton::Left => 1.0,
+                        MouseButton::Right => -1.0,
+                        _ => return,
+                    },
+                );
 
-            let mut dx = Float::with_val(prec, &cx / &memory.bwidth);
-            dx.mul_assign_round(&two, Round::Nearest);
-            dx.sub_assign_round(&one, Round::Nearest);
-            dx.mul_assign_round(&memory.aspect, Round::Nearest);
-            dx.mul_assign_round(&zs, Round::Nearest);
+                let cx = Float::with_val(prec, memory.cursor_x);
+                let cy = Float::with_val(prec, memory.cursor_y);
+                let one = Float::with_val(prec, 1.0);
+                let two = Float::with_val(prec, 2.0);
 
-            let mut dy = Float::with_val(prec, &cy / &memory.bheight);
-            dy.mul_assign_round(&two, Round::Nearest);
-            dy.sub_assign_round(&one, Round::Nearest);
-            dy.mul_assign_round(&zs, Round::Nearest);
-            dy.mul_assign_round(-1.0, Round::Nearest);
+                let mut dx = Float::with_val(prec, &cx / &memory.bwidth);
+                dx.mul_assign_round(&two, Round::Nearest);
+                dx.sub_assign_round(&one, Round::Nearest);
+                dx.mul_assign_round(&memory.aspect, Round::Nearest);
+                dx.mul_assign_round(&zs, Round::Nearest);
 
-            let dcx = Float::with_val(prec, &memory.zoom * &dx);
-            let dcy = Float::with_val(prec, &memory.zoom * &dy);
-            memory.cx.add_assign_round(dcx, Round::Nearest);
-            memory.cy.add_assign_round(dcy, Round::Nearest);
-            memory.zoom.mul_assign_round(factor, Round::Nearest);
+                let mut dy = Float::with_val(prec, &cy / &memory.bheight);
+                dy.mul_assign_round(&two, Round::Nearest);
+                dy.sub_assign_round(&one, Round::Nearest);
+                dy.mul_assign_round(&zs, Round::Nearest);
+                dy.mul_assign_round(-1.0, Round::Nearest);
 
-            memory.rerender = true;
+                let dcx = Float::with_val(prec, &*z * &dx);
+                let dcy = Float::with_val(prec, &*z * &dy);
+                x.add_assign_round(dcx, Round::Nearest);
+                y.add_assign_round(dcy, Round::Nearest);
+                z.mul_assign_round(factor, Round::Nearest);
+            });
         }
         // TODO: high precision
         // glazer::Input::Device(DeviceEvent::MouseWheel { delta }) => match delta {
@@ -135,23 +163,25 @@ fn update_and_render(
     window.set_title("Mandelbrot Set");
 
     let pipeline = memory.pipeline.get_or_insert_with(|| {
-        crate::pipeline::create_pipeline(
+        // TODO: This is stupid
+        let prec = 1024 * 32;
+        let z = Float::parse(&memory.config.zoom).unwrap().complete(prec);
+        let prec = precision(&z);
+        let x = Float::parse(&memory.config.x).unwrap().complete(prec);
+        let y = Float::parse(&memory.config.y).unwrap().complete(prec);
+
+        Pipeline::new(
             Some(window),
-            &memory.palette,
-            memory.width,
-            memory.height,
+            &crate::palette::parse_palette(&memory.config.palette),
+            memory.config.width,
+            memory.config.height,
             false,
+            x,
+            y,
+            z,
         )
     });
 
-    if memory.rerender {
-        memory.rerender = false;
-        crate::pipeline::compute_mandelbrot(
-            pipeline,
-            memory.iterations,
-            &mut memory.zoom,
-            &mut memory.cx,
-            &mut memory.cy,
-        );
-    }
+    pipeline.compute_mandelbrot(memory.config.iterations);
+    pipeline.present();
 }

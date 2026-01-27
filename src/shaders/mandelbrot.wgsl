@@ -1,9 +1,7 @@
 struct MandelbrotUniform {
-    width: u32,
-    height: u32,
     iterations: u32,
-    zoom: f32,
-    q: i32,
+    zm: f32,
+    ze: i32,
 }
 
 struct OrbitUniform {
@@ -25,38 +23,34 @@ struct RefPoint {
 	_pad: u32,
 }
 
-@group(0) @binding(0) var<uniform> args: MandelbrotUniform;
-@group(0) @binding(1) var<uniform> orbit: OrbitUniform;
-@group(0) @binding(2) var<storage, read> points: array<RefPoint>;
+@group(0) @binding(0) var output: texture_storage_2d<rgba32float, write>;
+@group(0) @binding(1) var<uniform> args: MandelbrotUniform;
 
-struct VertexInput {
-    @location(0) position: vec2<f32>,
-}
+@group(1) @binding(0) var<uniform> orbit: OrbitUniform;
+@group(1) @binding(1) var<storage, read> points: array<RefPoint>;
 
-struct VertexOutput {
-    @builtin(position) clip_position: vec4<f32>,
-    @location(0) delta: vec2<f32>,
-}
+override SWAP_CHANNELS: bool = false;
+@group(2) @binding(0) var palette: texture_2d<f32>;
+@group(2) @binding(1) var palette_sampler: sampler;
 
-@vertex
-fn vs_main(in: VertexInput) -> VertexOutput {
-    var out: VertexOutput;
-    let aspect = f32(args.width) / f32(args.height);
-    out.clip_position = vec4<f32>(in.position.x, in.position.y, 0.0, 1.0);
-    out.delta = vec2(in.position.x * aspect, in.position.y) * args.zoom * 2.0;
-    return out;
+@compute @workgroup_size(16, 16)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+    let sz = textureDimensions(output);
+    if (id.x >= sz.x || id.y >= sz.y) { return; }
+    let aspect = f32(sz.x) / f32(sz.y);
+    var uv = vec2<f32>(f32(id.x) * aspect, f32(sz.y - id.y)) / vec2<f32>(sz.xy) * 2.0 - 1.0;
+    textureStore(output, id.xy, mandel(uv * args.zm * 2.0));
 }
 
 // I am not going to pretend to understand this code: 
 // https://github.com/HastingsGreer/mandeljs/blob/7bb12c6ee2214e4eea82a30498de85823b3be474/main.js#L198
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-	var q = args.q - 1;
+fn mandel(delta: vec2<f32>) -> vec4<f32> {
+	var q = args.ze - 1;
 	let cq = q;
 	q = q + orbit.poly_scale_exponent;
 	var S = pow(2.0, f32(q));
-	var dcx = in.delta.x;
-	var dcy = in.delta.y;
+	var dcx = delta.x;
+	var dcy = delta.y;
 
 	// dx + dyi = (p0 + p1 i) * (dcx, dcy) + (p2 + p3i) * (dcx + dcy * i) * (dcx + dcy * i)
 	let sqrx = dcx * dcx - dcy * dcy;
@@ -82,8 +76,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 		k += 1;
 
 		let os = points[k - 1].e;
-		dcx = in.delta.x * pow(2.0, f32(-q + cq - os));
-		dcy = in.delta.y * pow(2.0, f32(-q + cq - os));
+		dcx = delta.x * pow(2.0, f32(-q + cq - os));
+		dcy = delta.y * pow(2.0, f32(-q + cq - os));
 		var unS = pow(2.0, f32(q) - f32(os));
 
 		if (abs(unS) > 3.4028235e34) {
@@ -114,8 +108,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 			dy = dy / 2.0;
 			q = q + 1;
 			S = pow(2.0, f32(q));
-			dcx = in.delta.x * pow(2.0, f32(-q + cq));
-			dcy = in.delta.y * pow(2.0, f32(-q + cq));
+			dcx = delta.x * pow(2.0, f32(-q + cq));
+			dcy = delta.y * pow(2.0, f32(-q + cq));
 		}
 
 		if (
@@ -126,8 +120,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 			dy = fy;
 			q = 0;
 			S = pow(2.0, f32(q));
-			dcx = in.delta.x * pow(2.0, f32(-q + cq));
-			dcy = in.delta.y * pow(2.0, f32(-q + cq));
+			dcx = delta.x * pow(2.0, f32(-q + cq));
+			dcy = delta.y * pow(2.0, f32(-q + cq));
 			k = 0;
 			x = points[0].x;
 			y = points[0].y;
@@ -142,10 +136,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
  	return iteration_to_rgb(u32(j), fx, fy);
 }
 
-override SWAP_CHANNELS: bool = false;
-@group(0) @binding(3) var palette: texture_2d<f32>;
-@group(0) @binding(4) var palette_sampler: sampler;
-
 fn iteration_to_rgb(iteration: u32, x: f32, y: f32) -> vec4<f32> {
     if (iteration == args.iterations) {
         return vec4(0.0, 0.0, 0.0, 1.0);
@@ -157,7 +147,7 @@ fn iteration_to_rgb(iteration: u32, x: f32, y: f32) -> vec4<f32> {
     let iter = f32(iteration) + 1.0 - nu;
 
 	let uv = vec2(iter / 100.0, 0.5);
-	let rgb = textureSample(palette, palette_sampler, uv).rgb;
+	let rgb = textureSampleLevel(palette, palette_sampler, uv, 0.0).rgb;
     return vec4(select(rgb.bgr, rgb, SWAP_CHANNELS), 1.0);
 }
 
@@ -174,7 +164,7 @@ fn not_quite_stripes(iteration: u32, x: f32, y: f32, s1: f32, s2: f32) -> vec4<f
 
     let avg_stripe = stripe / iter; 
     let uv_x = (iter / 24.0) + (avg_stripe * 0.5); 
-    let rgb = textureSample(palette, palette_sampler, vec2(uv_x, 0.5)).rgb;
+    let rgb = textureSampleLevel(palette, palette_sampler, vec2(uv_x, 0.5), 0.0).rgb;
     return vec4(select(rgb.bgr, rgb, SWAP_CHANNELS), 1.0);
 }
 
@@ -187,8 +177,4 @@ fn stripe_to_rgb(iteration: u32, x: f32, y: f32, s1: f32, s2: f32) -> vec4<f32> 
     let mx = mix(s1 / f32(iteration), s2 / f32(iteration - 1), nu);
     let iter = f32(iteration) + 1.0 - nu;
 	return vec4(mx, mx, mx, 1.0);
-
-	// let uv = vec2(iter / 24.0, 0.5);
-	// let rgb = textureSample(palette, palette_sampler, uv).rgb * mx;
-    // return vec4(select(rgb.bgr, rgb, SWAP_CHANNELS), 1.0);
 }

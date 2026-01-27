@@ -4,14 +4,16 @@
 
 use rug::Float;
 
+mod compute;
+pub mod config;
 mod orbit;
 pub mod palette;
 pub mod pipeline;
 mod ssaa;
 pub mod viewer;
 
-pub fn precision(zoom: &Float) -> u32 {
-    53 + (zoom.get_exp().unwrap_or(0).abs() as u32)
+pub fn precision(z: &Float) -> u32 {
+    53 + z.get_exp().unwrap_or(0).unsigned_abs()
 }
 
 pub fn byte_slice<T>(slice: &[T]) -> &[u8] {

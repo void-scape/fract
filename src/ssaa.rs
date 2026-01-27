@@ -1,18 +1,16 @@
-pub const SSAA_SAMPLES: u32 = 2;
+const SSAA_SAMPLES: u32 = 2;
 
-/// Optionally perform super-sampling on the mandelbrot.
+/// Blits a texture to a render target.
 ///
-/// Acts as the offscreen texture from which frames are rendered.
+/// If the texture happens to be higher resolution than the render target,
+/// then this operation performs supersampling.
 pub struct SsaaPipeline {
-    dst: wgpu::Texture,
-    dst_view: wgpu::TextureView,
-    data: Option<Data>,
-}
-
-struct Data {
     pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
     src_view: wgpu::TextureView,
+    dst: wgpu::Texture,
+    dst_view: wgpu::TextureView,
+    enabled: bool,
 }
 
 impl SsaaPipeline {
@@ -40,138 +38,120 @@ impl SsaaPipeline {
         let dst = device.create_texture(&dst_desc);
         let dst_view = dst.create_view(&Default::default());
 
-        if enabled {
-            let bind_group_layout =
-                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: None,
-                    entries: &[
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Texture {
-                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                                view_dimension: wgpu::TextureViewDimension::D2,
-                                multisampled: false,
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 1,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                            count: None,
-                        },
-                    ],
-                });
-
-            let src_desc = wgpu::TextureDescriptor {
-                size: wgpu::Extent3d {
-                    width: width as u32 * SSAA_SAMPLES,
-                    height: height as u32 * SSAA_SAMPLES,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::RENDER_ATTACHMENT,
-                label: None,
-                view_formats: &[],
-            };
-            let src = device.create_texture(&src_desc);
-            let src_view = src.create_view(&Default::default());
-
-            let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                ..Default::default()
-            });
-
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: None,
-                layout: &bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&src_view),
+        let ssaa_samples = if enabled { SSAA_SAMPLES } else { 1 };
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: None,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
                     },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&sampler),
-                    },
-                ],
-            });
-
-            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                bind_group_layouts: &[&bind_group_layout],
-                ..Default::default()
-            });
-
-            let shader = device.create_shader_module(wgpu::include_wgsl!("shaders/ssaa.wgsl"));
-            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: None,
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
+                    count: None,
                 },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(format.into())],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                cache: None,
-                multiview_mask: None,
-            });
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
 
-            Self {
-                dst,
-                dst_view,
-                data: Some(Data {
-                    pipeline,
-                    bind_group,
-                    src_view,
-                }),
-            }
-        } else {
-            Self {
-                dst,
-                dst_view,
-                data: None,
-            }
+        let src_desc = wgpu::TextureDescriptor {
+            size: wgpu::Extent3d {
+                width: width as u32 * ssaa_samples,
+                height: height as u32 * ssaa_samples,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba32Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::STORAGE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
+            label: None,
+            view_formats: &[],
+        };
+        let src = device.create_texture(&src_desc);
+        let src_view = src.create_view(&Default::default());
+
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&src_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            bind_group_layouts: &[&bind_group_layout],
+            ..Default::default()
+        });
+
+        let shader = device.create_shader_module(wgpu::include_wgsl!("shaders/ssaa.wgsl"));
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: None,
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(format.into())],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            cache: None,
+            multiview_mask: None,
+        });
+
+        Self {
+            pipeline,
+            bind_group,
+            src_view,
+            dst,
+            dst_view,
+            enabled,
         }
     }
 
-    pub fn enabled(&self) -> bool {
-        self.data.is_some()
-    }
-
-    pub fn ssaa_dimension(&self, d: usize) -> usize {
-        if self.enabled() {
-            d * SSAA_SAMPLES as usize
+    pub fn ssaa_factor(&self) -> usize {
+        if self.enabled {
+            SSAA_SAMPLES as usize
         } else {
-            d
+            1
         }
     }
 
     /// Texture view that the mandelbrot should be rendered to.
     pub fn render_target(&self) -> &wgpu::TextureView {
-        match &self.data {
-            Some(data) => &data.src_view,
-            None => &self.dst_view,
-        }
+        &self.src_view
     }
 
     /// Texture that contains the final mandelbrot render.
-    ///
-    /// If SSAA is disabled, then this simply returns [`Self::render_target`].
     pub fn output_texture(&self) -> &wgpu::Texture {
         &self.dst
     }
@@ -180,10 +160,6 @@ impl SsaaPipeline {
     ///
     /// If SSAA is disabled, this function does nothing.
     pub fn render_pass(&self, encoder: &mut wgpu::CommandEncoder) {
-        let Some(data) = &self.data else {
-            return;
-        };
-
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: None,
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -200,8 +176,8 @@ impl SsaaPipeline {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        rpass.set_pipeline(&data.pipeline);
-        rpass.set_bind_group(0, &data.bind_group, &[]);
+        rpass.set_pipeline(&self.pipeline);
+        rpass.set_bind_group(0, &self.bind_group, &[]);
         rpass.draw(0..3, 0..1);
     }
 }

@@ -1,5 +1,5 @@
 use clap::Parser;
-use fract::precision;
+use fract::{config::Config, palette::parse_palette, pipeline::Pipeline, precision};
 use rug::{
     Float,
     ops::{AddAssignRound, CompleteRound},
@@ -31,33 +31,6 @@ struct Args {
     output: Option<String>,
 }
 
-#[derive(serde::Deserialize)]
-struct Config {
-    x: String,
-    y: String,
-    zoom: String,
-    iterations: usize,
-    width: usize,
-    height: usize,
-    palette: String,
-    ssaa: bool,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            x: "0.0".to_string(),
-            y: "0.0".to_string(),
-            zoom: "2.0".to_string(),
-            iterations: 10_000,
-            width: 1600,
-            height: 1600,
-            palette: "classic".to_string(),
-            ssaa: false,
-        }
-    }
-}
-
 fn main() -> std::io::Result<ExitCode> {
     let mut args = Args::parse();
     let config = if let Some(path) = &args.config {
@@ -72,51 +45,12 @@ fn main() -> std::io::Result<ExitCode> {
         Config::default()
     };
 
-    let palette = match &*config.palette {
-        "classic" => fract::palette::classic().to_vec(),
-        "lava" => fract::palette::lava().to_vec(),
-        "ocean" => fract::palette::ocean().to_vec(),
-        _ => {
-            println!("Unknown palette: {}", config.palette);
-            return Ok(ExitCode::FAILURE);
-        }
-    };
-
     if let Some(path) = args.output.take() {
-        output(&args, &path, &config, &palette)?;
+        output(&args, &path, &config, &parse_palette(&config.palette))?;
     }
 
-    // TODO: This is stupid
-    let prec = 1024 * 32;
-    let z = Float::parse(config.zoom).unwrap().complete(prec);
-    let prec = precision(&z);
-
-    let x = Float::parse(config.x).unwrap().complete(prec);
-    let y = Float::parse(config.y).unwrap().complete(prec);
-    let iterations = config.iterations;
-    let width = config.width;
-    let height = config.height;
-
-    let w = Float::with_val(prec, width as f32);
-    let h = Float::with_val(prec, height as f32);
-
     if args.viewer {
-        fract::viewer::run(fract::viewer::Memory {
-            zoom: z,
-            cursor_x: 0.0,
-            cursor_y: 0.0,
-            cx: Float::with_val(prec, x),
-            cy: Float::with_val(prec, y),
-            iterations,
-            width,
-            height,
-            palette,
-            pipeline: None,
-            aspect: Float::with_val(prec, &w / &h),
-            bwidth: w,
-            bheight: h,
-            rerender: true,
-        });
+        fract::viewer::run(fract::viewer::Memory::from_config(config));
     }
 
     Ok(ExitCode::SUCCESS)
@@ -150,10 +84,10 @@ fn output(
 
     // TODO: This is stupid
     let prec = 1024 * 32;
-    let mut z = Float::parse(&config.zoom).unwrap().complete(prec);
+    let z = Float::parse(&config.zoom).unwrap().complete(prec);
     let prec = precision(&z);
-    let mut x = Float::parse(&config.x).unwrap().complete(prec);
-    let mut y = Float::parse(&config.y).unwrap().complete(prec);
+    let x = Float::parse(&config.x).unwrap().complete(prec);
+    let y = Float::parse(&config.y).unwrap().complete(prec);
     let iterations = config.iterations;
     let width = config.width;
     let height = config.height;
@@ -168,18 +102,20 @@ fn output(
     let mut log = std::fs::File::create(format!("{data_root}/log.txt"))?;
 
     env_logger::init();
-    let mut pipeline = fract::pipeline::create_pipeline(None, palette, width, height, ssaa);
+    let mut pipeline = Pipeline::new(None, palette, width, height, ssaa, x, y, z);
     let fps = 30;
 
     if args.frames == 1 {
-        log.write_all(b"[FRAME] 0\n")?;
-        log.write_all(format!("x = \"{}\"\n", x.to_string_radix(10, None)).as_bytes())?;
-        log.write_all(format!("y = \"{}\"\n", y.to_string_radix(10, None)).as_bytes())?;
-        log.write_all(format!("zoom = \"{}\"\n\n", z.to_string_radix(10, None)).as_bytes())?;
+        pipeline.read_position(|x, y, z| {
+            log.write_all(b"[FRAME] 0\n")?;
+            log.write_all(format!("x = \"{}\"\n", x.to_string_radix(10, None)).as_bytes())?;
+            log.write_all(format!("y = \"{}\"\n", y.to_string_radix(10, None)).as_bytes())?;
+            log.write_all(format!("zoom = \"{}\"\n\n", z.to_string_radix(10, None)).as_bytes())
+        })?;
 
         time(0, || {
-            fract::pipeline::compute_mandelbrot(&mut pipeline, iterations, &mut z, &mut x, &mut y);
-            let pixels = fract::pipeline::pipeline_frame_pixel_bytes(&pipeline);
+            pipeline.compute_mandelbrot(iterations);
+            let pixels = pipeline.read_output_buffer_bytes();
             png(output, &pixels, width, height)
         })?;
     } else {
@@ -192,44 +128,22 @@ fn output(
         use indicatif::ProgressBar;
         let bar = ProgressBar::new(args.frames as u64);
 
-        // render first frame
-        fract::pipeline::compute_mandelbrot(&mut pipeline, iterations, &mut z, &mut x, &mut y);
-        fract::pipeline::stage_frame_pixel_bytes(&pipeline);
-        bar.inc(1);
-
         let mut encoder = Encoder::new(data_root, width, height, fps, sample_rate)?;
-        // lockstep render and retrieve from output buffer
         for i in 0..args.frames {
-            log.write_all(format!("[FRAME] {i}\n").as_bytes())?;
-            log.write_all(format!("x = \"{}\"\n", x.to_string_radix(10, None)).as_bytes())?;
-            log.write_all(format!("y = \"{}\"\n", y.to_string_radix(10, None)).as_bytes())?;
-            log.write_all(format!("zoom = \"{}\"\n\n", z.to_string_radix(10, None)).as_bytes())?;
+            pipeline.read_position(|x, y, z| {
+                log.write_all(format!("[FRAME] {i}\n").as_bytes())?;
+                log.write_all(format!("x = \"{}\"\n", x.to_string_radix(10, None)).as_bytes())?;
+                log.write_all(format!("y = \"{}\"\n", y.to_string_radix(10, None)).as_bytes())?;
+                log.write_all(format!("zoom = \"{}\"\n\n", z.to_string_radix(10, None)).as_bytes())
+            })?;
 
-            let read_idx = i % 2;
-            let write_idx = (i + 1) % 2;
-
-            let device = pipeline.device.clone();
-            let read_buffer = pipeline.output_buffers[read_idx].clone();
-            let pixels = std::thread::spawn(move || {
-                fract::pipeline::frame_pixel_bytes(&device, &read_buffer, width, height)
-            });
-
-            if i < args.frames - 1 {
-                let zoom_delta = Float::with_val(prec, &z * &zoom_factor);
+            pipeline.write_position(|_, _, z| {
+                let zoom_delta = Float::with_val(prec, &*z * &zoom_factor);
                 z.add_assign_round(zoom_delta, rug::float::Round::Nearest);
-                pipeline.current_buffer = write_idx;
-                fract::pipeline::compute_mandelbrot(
-                    &mut pipeline,
-                    iterations,
-                    &mut z,
-                    &mut x,
-                    &mut y,
-                );
-                fract::pipeline::stage_frame_pixel_bytes(&pipeline);
-                bar.inc(1);
-            }
-
-            let pixels = pixels.join().expect("Render thread panicked");
+            });
+            pipeline.compute_mandelbrot(iterations);
+            let pixels = pipeline.read_output_buffer_bytes();
+            bar.inc(1);
             encoder.render_frame(&pixels, &samples)?;
         }
 
