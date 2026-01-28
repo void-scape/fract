@@ -1,10 +1,10 @@
 use clap::Parser;
-use fract::{pipeline::Pipeline, time_secs};
+use fract::pipeline::Pipeline;
 use indicatif::{ProgressBar, ProgressStyle};
 use rug::{Float, ops::AddAssignRound};
 use std::{process::ExitCode, time::UNIX_EPOCH};
 
-/// Deep Mandelbrot set renderer.
+/// Mandelbrot set renderer.
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
@@ -63,7 +63,7 @@ fn main() -> std::io::Result<ExitCode> {
     println!("[RENDER] {}x{} {kind} {fps}", config.width, config.height,);
     config.log();
 
-    let rt = if args.frames == 1 {
+    if args.frames == 1 {
         if !args.output.to_lowercase().ends_with(".png") {
             println!("[ERROR] Invalid image format, expected PNG");
             return Ok(ExitCode::FAILURE);
@@ -81,7 +81,7 @@ fn main() -> std::io::Result<ExitCode> {
             .progress_chars("##-"),
         );
 
-        time_secs(|| fract::render_png(&mut pipeline, Some(&bar), &args.output))?
+        fract::render_png(&mut pipeline, Some(&bar), &args.output, 0)?;
     } else {
         if !args.output.to_lowercase().ends_with(".mp4") {
             println!("[ERROR] Invalid video format, expected MP4");
@@ -102,23 +102,20 @@ fn main() -> std::io::Result<ExitCode> {
 
         let encoder = fract::encoder::Encoder::new(data_root, width, height, args.fps);
         let frame_path = encoder.frame_path().to_string();
-        let rt = time_secs(|| {
-            fract::render_mp4(
-                &mut pipeline,
-                Some(&bar),
-                encoder,
-                args.frames,
-                |z| {
-                    let zoom_factor = Float::with_val(z.prec(), args.zoom);
-                    let zoom_delta = Float::with_val(z.prec(), &*z * &zoom_factor);
-                    z.add_assign_round(zoom_delta, rug::float::Round::Nearest);
-                },
-                &args.output,
-            )
-        })?;
+        fract::render_mp4(
+            &mut pipeline,
+            Some(&bar),
+            encoder,
+            args.frames,
+            |z| {
+                let zoom_factor = Float::with_val(z.prec(), args.zoom);
+                let zoom_delta = Float::with_val(z.prec(), &*z * &zoom_factor);
+                z.add_assign_round(zoom_delta, rug::float::Round::Nearest);
+            },
+            &args.output,
+        )?;
 
         println!("[LOG] Wrote {} images to {}", args.frames, frame_path);
-        rt
     };
 
     println!(
@@ -131,7 +128,6 @@ fn main() -> std::io::Result<ExitCode> {
         std::fs::metadata(&args.output)?.len(),
         args.output
     );
-    println!("[LOG] Total render time: {rt:.8}s");
 
     Ok(ExitCode::SUCCESS)
 }

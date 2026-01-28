@@ -1,4 +1,4 @@
-#[derive(Clone, serde::Deserialize)]
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
 pub struct Config {
     pub x: String,
     pub y: String,
@@ -42,6 +42,16 @@ impl Default for Config {
 pub fn from_path(path: &str) -> std::io::Result<Config> {
     match toml::from_str(&std::fs::read_to_string(path)?) {
         Ok(config) => Ok(config),
+        Err(err) => {
+            println!("[ERROR] Failed to parse config: {err}");
+            Err(std::io::ErrorKind::Other.into())
+        }
+    }
+}
+
+pub fn write_to(config: &Config, path: &str) -> std::io::Result<()> {
+    match toml::to_string(config) {
+        Ok(config) => std::fs::write(path, config),
         Err(err) => {
             println!("[ERROR] Failed to parse config: {err}");
             Err(std::io::ErrorKind::Other.into())

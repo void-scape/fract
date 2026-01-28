@@ -181,6 +181,17 @@ impl Pipeline {
         result
     }
 
+    pub fn write_config<R>(&mut self, f: impl FnOnce(&mut Config) -> R) -> R {
+        let result = f(&mut self.config);
+        self.updated_position = true;
+        self.palette = Palette::new(
+            &self.device,
+            &self.queue,
+            &parse_palette(&self.config.palette),
+        );
+        result
+    }
+
     /// Renders pixels with an iteration limit.
     ///
     /// Returns the remaining pixels to render.
@@ -194,7 +205,8 @@ impl Pipeline {
             self.orbit
                 .compute_reference_orbit(&self.x, &self.y, &self.z, iterations);
             self.orbit.write_buffers(&self.queue, &self.z);
-            self.compute.write_buffers(&self.queue, iterations, &self.z);
+            self.compute
+                .write_buffers(&self.queue, &self.config, &self.z);
         }
 
         let mut encoder = self
@@ -229,7 +241,7 @@ impl Pipeline {
                 .compute_reference_orbit(&self.x, &self.y, &self.z, self.config.iterations);
             self.orbit.write_buffers(&self.queue, &self.z);
             self.compute
-                .write_buffers(&self.queue, self.config.iterations, &self.z);
+                .write_buffers(&self.queue, &self.config, &self.z);
         }
 
         let mut encoder = self

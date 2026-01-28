@@ -1,4 +1,7 @@
 /target
 /data
 /captures
+/permutes
 config.toml
+per.toml
+collage.sh

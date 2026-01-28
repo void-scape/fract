@@ -9,6 +9,9 @@ name = "viewer"
 [[bin]]
 name = "render"
 
+[[bin]]
+name = "permute"
+
 [dependencies]
 tint = { path = "../blaze/crates/tint" }
 num = "0.4.3"

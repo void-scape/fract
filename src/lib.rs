@@ -23,6 +23,7 @@ pub fn render_png(
     pipeline: &mut Pipeline,
     progress_bar: Option<&ProgressBar>,
     output: &str,
+    frame: usize,
 ) -> std::io::Result<()> {
     let pixels = pipeline.total_pixels() as u64;
 
@@ -43,7 +44,7 @@ pub fn render_png(
         bar.finish();
     }
 
-    pipeline.log(0)?;
+    pipeline.log(frame)?;
     let pixels = pipeline.read_output_buffer_bytes();
     let (w, h) = pipeline.dimensions();
     encoder::png(output, &pixels, w, h)
@@ -87,17 +88,6 @@ pub fn render_mp4(
     }
 
     encoder.finish(output)
-}
-
-/// Stupid simple `SystemTime` timer.
-pub fn time_secs<E>(f: impl FnOnce() -> Result<(), E>) -> Result<f32, E> {
-    let start = std::time::SystemTime::now();
-    let r = f();
-    let s = std::time::SystemTime::now()
-        .duration_since(start)
-        .unwrap()
-        .as_secs_f32();
-    r.map(|_| s)
 }
 
 /// Parses `f` and estimates the required precision.

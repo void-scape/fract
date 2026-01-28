@@ -1,6 +1,8 @@
 struct MandelbrotUniform {
     iterations: i32,
     zm: f32, ze: i32,
+	batch_iter: i32,
+	color_scale: f32,
 }
 
 struct OrbitUniform {
@@ -26,7 +28,6 @@ struct OrbitState {
 @group(0) @binding(1) var<uniform> args: MandelbrotUniform;
 @group(0) @binding(2) var<storage, read_write> states: array<OrbitState>;
 @group(0) @binding(3) var<storage, read_write> remaining: atomic<u32>;
-override BATCH_ITER: i32 = 1000;
 
 @group(1) @binding(0) var<uniform> orbit: OrbitUniform;
 @group(1) @binding(1) var<storage, read> points: array<RefPoint>;
@@ -34,7 +35,6 @@ override BATCH_ITER: i32 = 1000;
 @group(2) @binding(0) var palette: texture_2d<f32>;
 @group(2) @binding(1) var palette_sampler: sampler;
 override SWAP_CHANNELS: bool = false;
-override COLOR_SCALE: f32 = 24.0;
 
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) local_id: u32) {
@@ -97,7 +97,7 @@ fn mandelbrot(state_index: u32, delta: vec2<f32>) -> vec4<f32> {
 	var x0 = points[0].x;
 	var y0 = points[0].y;
 
-	let batch_limit = j + BATCH_ITER;
+	let batch_limit = j + args.batch_iter;
 	while (j < batch_limit && j < args.iterations) {
 		j += 1;
 		k += 1;
@@ -181,7 +181,7 @@ fn iteration_to_rgb(iteration: i32, x: f32, y: f32) -> vec4<f32> {
     let nu = log2(log2(zn) * 0.5);
     let iter = f32(iteration) + 1.0 - nu;
 
-	let uv = vec2(iter / COLOR_SCALE, 0.5);
+	let uv = vec2(iter / args.color_scale, 0.5);
 	let rgb = textureSampleLevel(palette, palette_sampler, uv, 0.0).rgb;
     return vec4(select(rgb.bgr, rgb, SWAP_CHANNELS), 1.0);
 }
