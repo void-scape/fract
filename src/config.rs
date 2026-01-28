@@ -1,4 +1,4 @@
-#[derive(serde::Deserialize)]
+#[derive(Clone, serde::Deserialize)]
 pub struct Config {
     pub x: String,
     pub y: String,
@@ -8,6 +8,18 @@ pub struct Config {
     pub height: usize,
     pub palette: String,
     pub ssaa: bool,
+    pub batch_iter: usize,
+    pub color_scale: f32,
+}
+
+impl Config {
+    pub fn log(&self) {
+        let ssaa = if self.ssaa { "enabled" } else { "disabled" };
+        println!(
+            "[CONFIG] {} iterations, palette={}, ssaa={}, batch_iter={}, color_scale={}",
+            self.iterations, self.palette, ssaa, self.batch_iter, self.color_scale,
+        );
+    }
 }
 
 impl Default for Config {
@@ -21,6 +33,18 @@ impl Default for Config {
             height: 1600,
             palette: "classic".to_string(),
             ssaa: false,
+            batch_iter: 1000,
+            color_scale: 24.0,
+        }
+    }
+}
+
+pub fn from_path(path: &str) -> std::io::Result<Config> {
+    match toml::from_str(&std::fs::read_to_string(path)?) {
+        Ok(config) => Ok(config),
+        Err(err) => {
+            println!("[ERROR] Failed to parse config: {err}");
+            Err(std::io::ErrorKind::Other.into())
         }
     }
 }

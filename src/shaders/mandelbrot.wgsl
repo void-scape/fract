@@ -1,11 +1,11 @@
 struct MandelbrotUniform {
-    iterations: u32,
+    iterations: i32,
     zm: f32, ze: i32,
 }
 
 struct OrbitUniform {
-    points: u32,
-    polylim: u32,
+    points: i32,
+    polylim: i32,
 	poly_scale_exponent: i32,
 	a: f32, b: f32,
 	c: f32, d: f32,
@@ -18,7 +18,7 @@ struct RefPoint {
 
 struct OrbitState {
     dx: f32, dy: f32,
-    j: u32, k: i32,
+    j: i32, k: i32,
     q: i32, finished: u32,
 }
 
@@ -26,13 +26,15 @@ struct OrbitState {
 @group(0) @binding(1) var<uniform> args: MandelbrotUniform;
 @group(0) @binding(2) var<storage, read_write> states: array<OrbitState>;
 @group(0) @binding(3) var<storage, read_write> remaining: atomic<u32>;
+override BATCH_ITER: i32 = 1000;
 
 @group(1) @binding(0) var<uniform> orbit: OrbitUniform;
 @group(1) @binding(1) var<storage, read> points: array<RefPoint>;
 
-override SWAP_CHANNELS: bool = false;
 @group(2) @binding(0) var palette: texture_2d<f32>;
 @group(2) @binding(1) var palette_sampler: sampler;
+override SWAP_CHANNELS: bool = false;
+override COLOR_SCALE: f32 = 24.0;
 
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) local_id: u32) {
@@ -64,14 +66,14 @@ fn mandelbrot(state_index: u32, delta: vec2<f32>) -> vec4<f32> {
 
 	var dx = state.dx;
     var dy = state.dy;
-    var j  = i32(state.j);
+    var j  = state.j;
     var k  = state.k;
     var q  = state.q;
     let cq = args.ze - 1;
 
 	if (j == 0) {
         q = cq + orbit.poly_scale_exponent;
-        k = i32(orbit.polylim);
+        k = orbit.polylim;
         j = k;
         
         let dcx_init = delta.x;
@@ -95,8 +97,8 @@ fn mandelbrot(state_index: u32, delta: vec2<f32>) -> vec4<f32> {
 	var x0 = points[0].x;
 	var y0 = points[0].y;
 
-	let batch_limit = j + 1000;
-	while (j < batch_limit && j < i32(args.iterations)) {
+	let batch_limit = j + BATCH_ITER;
+	while (j < batch_limit && j < args.iterations) {
 		j += 1;
 		k += 1;
 
@@ -137,7 +139,7 @@ fn mandelbrot(state_index: u32, delta: vec2<f32>) -> vec4<f32> {
 
 		if (
 			(fx * fx + fy * fy < S * S * dx * dx + S * S * dy * dy) 
-				|| (k >= (i32(orbit.points) - 1))
+				|| (k >= (orbit.points - 1))
 		) {
 			dx = fx;
 			dy = fy;
@@ -151,13 +153,13 @@ fn mandelbrot(state_index: u32, delta: vec2<f32>) -> vec4<f32> {
 		}
 	}
 
-	if (j >= i32(args.iterations)) {
+	if (j >= args.iterations) {
         state.finished = 1u;
     }
 
 	state.dx = dx;
     state.dy = dy;
-    state.j = u32(j);
+    state.j = j;
     state.k = k;
     state.q = q;
     states[state_index] = state;
@@ -166,10 +168,10 @@ fn mandelbrot(state_index: u32, delta: vec2<f32>) -> vec4<f32> {
 	y = points[k].y;
 	let fx = x * exp2(f32(points[k].e)) + S * dx;
 	let fy = y * exp2(f32(points[k].e)) + S * dy;
- 	return iteration_to_rgb(u32(j), fx, fy);
+ 	return iteration_to_rgb(j, fx, fy);
 }
 
-fn iteration_to_rgb(iteration: u32, x: f32, y: f32) -> vec4<f32> {
+fn iteration_to_rgb(iteration: i32, x: f32, y: f32) -> vec4<f32> {
     if (iteration == args.iterations) {
         return vec4(0.0, 0.0, 0.0, 1.0);
     }
@@ -179,10 +181,7 @@ fn iteration_to_rgb(iteration: u32, x: f32, y: f32) -> vec4<f32> {
     let nu = log2(log2(zn) * 0.5);
     let iter = f32(iteration) + 1.0 - nu;
 
-	let val = log2(iter) / 8.0; 
-    let uv = vec2(val, 0.5);
-	// let uv = vec2(iter / 24.0, 0.5);
-
+	let uv = vec2(iter / COLOR_SCALE, 0.5);
 	let rgb = textureSampleLevel(palette, palette_sampler, uv, 0.0).rgb;
     return vec4(select(rgb.bgr, rgb, SWAP_CHANNELS), 1.0);
 }

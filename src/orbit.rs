@@ -1,10 +1,10 @@
-use crate::{byte_slice, precision};
+use crate::byte_slice;
 use rug::{Assign, Float, float::Round, ops::AddAssignRound};
 
 #[repr(C)]
 struct OrbitUniform {
-    points: u32,
-    polylim: u32,
+    points: i32,
+    polylim: i32,
     poly_scale_exponent: i32,
     coefficients: [f32; 6],
 }
@@ -121,7 +121,7 @@ impl Orbit {
         self.points.clear();
         self.polylim = 0;
 
-        let prec = precision(z);
+        let prec = z.prec() + 10;
         let mut x = Float::with_val(prec, 0.0);
         let mut y = Float::with_val(prec, 0.0);
         let mut txx = Float::with_val(prec, 0.0);
@@ -264,8 +264,8 @@ impl Orbit {
         .map(|d| d.m * 2f32.powi(d.e));
 
         let uniform = OrbitUniform {
-            points: self.points.len() as u32,
-            polylim: self.polylim as u32,
+            points: self.points.len() as i32,
+            polylim: self.polylim as i32,
             poly_scale_exponent: poly_scape_exp.e,
             coefficients: poly_scaled,
         };

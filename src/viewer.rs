@@ -1,4 +1,4 @@
-use crate::{config::Config, pipeline::Pipeline, precision};
+use crate::{config::Config, pipeline::Pipeline};
 use glazer::winit::{
     event::{DeviceEvent, ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
     keyboard::{KeyCode, PhysicalKey},
@@ -6,10 +6,10 @@ use glazer::winit::{
 use rug::{
     Float,
     float::Round,
-    ops::{AddAssignRound, CompleteRound, MulAssignRound, SubAssignRound},
+    ops::{AddAssignRound, MulAssignRound, SubAssignRound},
 };
 
-pub fn run(memory: Memory) {
+pub fn run(memory: Memory) -> ! {
     let width = memory.config.width;
     let height = memory.config.height;
     glazer::run(memory, width, height, handle_input, update_and_render, None);
@@ -20,31 +20,15 @@ pub struct Memory {
     config: Config,
     cursor_x: f64,
     cursor_y: f64,
-    aspect: Float,
-    bwidth: Float,
-    bheight: Float,
 }
 
 impl Memory {
     pub fn from_config(config: Config) -> Self {
-        // TODO: This is stupid
-        let prec = 1024 * 32;
-        let z = Float::parse(&config.zoom).unwrap().complete(prec);
-        let prec = precision(&z);
-
-        let width = config.width;
-        let height = config.height;
-        let w = Float::with_val(prec, width as f32);
-        let h = Float::with_val(prec, height as f32);
-
         Self {
             config,
             cursor_x: 0.0,
             cursor_y: 0.0,
             pipeline: None,
-            aspect: Float::with_val(prec, &w / &h),
-            bwidth: w,
-            bheight: h,
         }
     }
 }
@@ -64,9 +48,10 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
             KeyCode::Escape => {
                 if let Some(pipeline) = memory.pipeline.as_mut() {
                     pipeline.read_position(|x, y, z| {
-                        println!("x = \"{}\"", x.to_string_radix(10, None));
-                        println!("y = \"{}\"", y.to_string_radix(10, None));
-                        println!("zoom = \"{}\"\n", z.to_string_radix(10, None));
+                        println!("x = \"{x}\"");
+                        println!("y = \"{y}\"");
+                        println!("zoom = \"{z}\"");
+                        println!("iterations = {}\n", memory.config.iterations);
                     });
                 }
                 std::process::exit(0);
@@ -74,9 +59,10 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
             KeyCode::KeyP => {
                 if let Some(pipeline) = memory.pipeline.as_mut() {
                     pipeline.read_position(|x, y, z| {
-                        println!("x = \"{}\"", x.to_string_radix(10, None));
-                        println!("y = \"{}\"", y.to_string_radix(10, None));
-                        println!("zoom = \"{}\"\n", z.to_string_radix(10, None));
+                        println!("x = \"{x}\"");
+                        println!("y = \"{y}\"");
+                        println!("zoom = \"{z}\"");
+                        println!("iterations = {}\n", memory.config.iterations);
                     });
                 }
             }
@@ -96,7 +82,7 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
             };
 
             pipeline.write_position(|x, y, z| {
-                let prec = precision(z);
+                let prec = z.prec().max(x.prec()).max(y.prec()) + 10;
 
                 let factor = match button {
                     MouseButton::Left => 0.5,
@@ -118,13 +104,16 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
                 let one = Float::with_val(prec, 1.0);
                 let two = Float::with_val(prec, 2.0);
 
-                let mut dx = Float::with_val(prec, &cx / &memory.bwidth);
+                let w = memory.config.width as f64;
+                let h = memory.config.height as f64;
+
+                let mut dx = Float::with_val(prec, &cx / w);
                 dx.mul_assign_round(&two, Round::Nearest);
                 dx.sub_assign_round(&one, Round::Nearest);
-                dx.mul_assign_round(&memory.aspect, Round::Nearest);
+                dx.mul_assign_round(w / h, Round::Nearest);
                 dx.mul_assign_round(&zs, Round::Nearest);
 
-                let mut dy = Float::with_val(prec, &cy / &memory.bheight);
+                let mut dy = Float::with_val(prec, &cy / h);
                 dy.mul_assign_round(&two, Round::Nearest);
                 dy.sub_assign_round(&one, Round::Nearest);
                 dy.mul_assign_round(&zs, Round::Nearest);
@@ -160,25 +149,9 @@ fn update_and_render(
     window.set_resizable(false);
     window.set_title("Mandelbrot Set");
 
-    let pipeline = memory.pipeline.get_or_insert_with(|| {
-        // TODO: This is stupid
-        let prec = 1024 * 32;
-        let z = Float::parse(&memory.config.zoom).unwrap().complete(prec);
-        let prec = precision(&z);
-        let x = Float::parse(&memory.config.x).unwrap().complete(prec);
-        let y = Float::parse(&memory.config.y).unwrap().complete(prec);
-
-        Pipeline::new(
-            Some(window),
-            &crate::palette::parse_palette(&memory.config.palette),
-            memory.config.width,
-            memory.config.height,
-            false,
-            x,
-            y,
-            z,
-        )
-    });
+    let pipeline = memory
+        .pipeline
+        .get_or_insert_with(|| Pipeline::new(Some(window), memory.config.clone(), None));
 
     pipeline.step_mandelbrot(memory.config.iterations);
     pipeline.present();

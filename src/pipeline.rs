@@ -1,16 +1,19 @@
 use crate::{
-    compute::ComputePipeline, orbit::Orbit, palette::Palette, precision, ssaa::SsaaPipeline,
+    compute::ComputePipeline,
+    config::Config,
+    float_from_str,
+    orbit::Orbit,
+    palette::{Palette, parse_palette},
+    ssaa::SsaaPipeline,
 };
 use glazer::winit::window::Window;
 use rug::Float;
-use tint::Sbgr;
 
 pub struct Pipeline {
     surface: Option<wgpu::Surface<'static>>,
     device: wgpu::Device,
     queue: wgpu::Queue,
-    width: usize,
-    height: usize,
+    config: Config,
     //
     output_buffer: wgpu::Buffer,
     bytes_per_row: usize,
@@ -24,19 +27,18 @@ pub struct Pipeline {
     x: Float,
     y: Float,
     z: Float,
+    //
+    log: Option<Box<dyn std::io::Write>>,
 }
 
 impl Pipeline {
     pub fn new(
         window: Option<&Window>,
-        palette: &[Sbgr],
-        width: usize,
-        height: usize,
-        ssaa: bool,
-        x: Float,
-        y: Float,
-        z: Float,
+        config: Config,
+        log: Option<Box<dyn std::io::Write>>,
     ) -> Self {
+        env_logger::init();
+
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
         let surface = window.map(|window| {
             instance
@@ -56,7 +58,7 @@ impl Pipeline {
             force_fallback_adapter: false,
         }))
         .expect("Failed to create adapter");
-        println!("Running on Adapter: {:#?}", adapter.get_info());
+        println!("[ADAPTER] {:?}", adapter.get_info());
 
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: None,
@@ -76,13 +78,13 @@ impl Pipeline {
                 .find(|f| f.is_srgb())
                 .copied()
                 .unwrap_or(surface_caps.formats[0]);
-            println!("Surface format: {:?}", surface_format);
+            println!("[ADAPTER] Surface format: {:?}", surface_format);
 
             let config = wgpu::SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
                 format: surface_format,
-                width: width as u32,
-                height: height as u32,
+                width: config.width as u32,
+                height: config.height as u32,
                 present_mode: wgpu::PresentMode::Fifo,
                 alpha_mode: surface_caps.alpha_modes[0],
                 view_formats: vec![],
@@ -94,19 +96,19 @@ impl Pipeline {
             wgpu::TextureFormat::Rgba8UnormSrgb
         };
 
-        let ssaa = SsaaPipeline::new(&device, surface_format, width, height, ssaa);
-        let compute = ComputePipeline::new(
+        let ssaa = SsaaPipeline::new(
             &device,
             surface_format,
-            ssaa.render_target(),
-            width,
-            height,
-            &ssaa,
+            config.width,
+            config.height,
+            config.ssaa,
         );
+        let compute = ComputePipeline::new(&device, surface_format, &ssaa, &config);
         let orbit = Orbit::new(&device);
-        let palette = Palette::new(&device, &queue, palette);
+        let palette = Palette::new(&device, &queue, &parse_palette(&config.palette));
 
-        let (bytes_per_row, buffer_size) = output_buffer_bytes_per_row_and_size(width, height);
+        let (bytes_per_row, buffer_size) =
+            output_buffer_bytes_per_row_and_size(config.width, config.height);
         let output_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: buffer_size as u64,
@@ -114,12 +116,15 @@ impl Pipeline {
             mapped_at_creation: false,
         });
 
+        let z = float_from_str(&config.zoom);
+        let x = float_from_str(&config.x);
+        let y = float_from_str(&config.y);
+
         Pipeline {
             surface,
             device,
             queue,
-            width,
-            height,
+            config,
             //
             output_buffer,
             bytes_per_row,
@@ -133,12 +138,19 @@ impl Pipeline {
             x,
             y,
             z,
+            //
+            log,
         }
+    }
+
+    pub fn dimensions(&self) -> (usize, usize) {
+        (self.config.width, self.config.height)
     }
 
     pub fn total_pixels(&self) -> usize {
         let sf = self.ssaa.ssaa_factor();
-        self.width * sf * self.height * sf
+        let (w, h) = self.dimensions();
+        w * sf * h * sf
     }
 
     pub fn read_position<R>(&mut self, f: impl FnOnce(&Float, &Float, &Float) -> R) -> R {
@@ -151,12 +163,21 @@ impl Pipeline {
     ) -> R {
         self.updated_position = true;
         let result = f(&mut self.x, &mut self.y, &mut self.z);
-        let prec = precision(&self.z);
-        if self.z.prec() != prec {
-            self.z.set_prec(prec);
-            self.x.set_prec(prec);
-            self.y.set_prec(prec);
+
+        let xexp = self.x.get_exp().unwrap_or(0).unsigned_abs();
+        let yexp = self.y.get_exp().unwrap_or(0).unsigned_abs();
+        let required = 64 + self.z.get_exp().unwrap_or(0).unsigned_abs() + xexp.max(yexp);
+
+        if self.x.prec() < required {
+            self.x.set_prec(required);
         }
+        if self.y.prec() < required {
+            self.y.set_prec(required);
+        }
+        if self.z.prec() < required {
+            self.z.set_prec(required);
+        }
+
         result
     }
 
@@ -185,8 +206,8 @@ impl Pipeline {
             &self.orbit,
             &self.palette,
             &self.ssaa,
-            self.width,
-            self.height,
+            self.config.width,
+            self.config.height,
         );
         self.ssaa.render_pass(&mut encoder);
         let remaining = self
@@ -197,7 +218,7 @@ impl Pipeline {
     }
 
     /// [`Pipeline::step_mandelbrot`] without rendering into the offscreen buffer.
-    pub fn step_mandelbrot_headless(&mut self, iterations: usize) -> u32 {
+    pub fn step_mandelbrot_headless(&mut self) -> u32 {
         if self.finished() {
             return 0;
         }
@@ -205,9 +226,10 @@ impl Pipeline {
         if self.updated_position {
             self.updated_position = false;
             self.orbit
-                .compute_reference_orbit(&self.x, &self.y, &self.z, iterations);
+                .compute_reference_orbit(&self.x, &self.y, &self.z, self.config.iterations);
             self.orbit.write_buffers(&self.queue, &self.z);
-            self.compute.write_buffers(&self.queue, iterations, &self.z);
+            self.compute
+                .write_buffers(&self.queue, self.config.iterations, &self.z);
         }
 
         let mut encoder = self
@@ -219,8 +241,8 @@ impl Pipeline {
             &self.orbit,
             &self.palette,
             &self.ssaa,
-            self.width,
-            self.height,
+            self.config.width,
+            self.config.height,
         );
         let remaining = self
             .compute
@@ -262,8 +284,8 @@ impl Pipeline {
                 aspect: wgpu::TextureAspect::All,
             },
             wgpu::Extent3d {
-                width: self.width as u32,
-                height: self.height as u32,
+                width: self.config.width as u32,
+                height: self.config.height as u32,
                 depth_or_array_layers: 1,
             },
         );
@@ -301,8 +323,8 @@ impl Pipeline {
                 },
             },
             wgpu::Extent3d {
-                width: self.width as u32,
-                height: self.height as u32,
+                width: self.config.width as u32,
+                height: self.config.height as u32,
                 depth_or_array_layers: 1,
             },
         );
@@ -318,14 +340,27 @@ impl Pipeline {
             .unwrap();
 
         let padded_data = buffer_slice.get_mapped_range();
-        let mut result = Vec::with_capacity(self.width * self.height * 4);
+        let mut result = Vec::with_capacity(self.config.width * self.config.height * 4);
         for chunk in padded_data.chunks(self.bytes_per_row) {
-            result.extend_from_slice(&chunk[..self.width * 4]);
+            result.extend_from_slice(&chunk[..self.config.width * 4]);
         }
         drop(padded_data);
         self.output_buffer.unmap();
 
         result
+    }
+
+    /// Write the current position and iterations for `frame`.
+    pub fn log(&mut self, frame: usize) -> std::io::Result<()> {
+        if let Some(log) = &mut self.log {
+            log.write_all(format!("[FRAME] {frame}\n").as_bytes())?;
+            log.write_all(format!("x = \"{}\"\n", self.x).as_bytes())?;
+            log.write_all(format!("y = \"{}\"\n", self.y).as_bytes())?;
+            log.write_all(format!("zoom = \"{}\"\n", self.z).as_bytes())?;
+            log.write_all(format!("iterations = {}\n\n", self.config.iterations).as_bytes())?;
+            log.flush()?;
+        }
+        Ok(())
     }
 }
 

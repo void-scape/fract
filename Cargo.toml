@@ -3,6 +3,12 @@ name = "fract"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "viewer"
+
+[[bin]]
+name = "render"
+
 [dependencies]
 tint = { path = "../blaze/crates/tint" }
 num = "0.4.3"
@@ -23,6 +29,3 @@ pollster = "0.4.0"
 wgpu = "28.0.0"
 # just need the window but this reduces the features in winit lol
 glazer = { path = "../blaze/crates/glazer", default-features = false }
-
-# software
-rayon = "1.11.0"

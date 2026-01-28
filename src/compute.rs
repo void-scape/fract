@@ -1,11 +1,11 @@
-use crate::{byte_slice, orbit::Orbit, palette::Palette, ssaa::SsaaPipeline};
+use crate::{byte_slice, config::Config, orbit::Orbit, palette::Palette, ssaa::SsaaPipeline};
 use rug::Float;
 use std::num::NonZeroU64;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
 struct MandelbrotUniform {
-    iterations: u32,
+    iterations: i32,
     zm: f32,
     ze: i32,
 }
@@ -28,10 +28,8 @@ impl ComputePipeline {
     pub fn new(
         device: &wgpu::Device,
         surface_format: wgpu::TextureFormat,
-        render_target: &wgpu::TextureView,
-        width: usize,
-        height: usize,
         ssaa: &SsaaPipeline,
+        config: &Config,
     ) -> Self {
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
@@ -41,7 +39,8 @@ impl ComputePipeline {
         });
 
         let sf = ssaa.ssaa_factor();
-        let pixel_state_bytes = (std::mem::size_of::<f32>() * 6 * width * sf * height * sf) as u64;
+        let pixel_state_bytes =
+            (std::mem::size_of::<f32>() * 6 * config.width * sf * config.height * sf) as u64;
         let pixel_state = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: pixel_state_bytes,
@@ -116,7 +115,7 @@ impl ComputePipeline {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(render_target),
+                    resource: wgpu::BindingResource::TextureView(ssaa.render_target()),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -140,7 +139,11 @@ impl ComputePipeline {
             surface_format,
             wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
         );
-        let constants = [("SWAP_CHANNELS", if needs_swap { 1.0 } else { 0.0 })];
+        let constants = [
+            ("SWAP_CHANNELS", if needs_swap { 1.0 } else { 0.0 }),
+            ("BATCH_ITER", config.batch_iter as f64),
+            ("COLOR_SCALE", config.color_scale as f64),
+        ];
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
@@ -181,7 +184,7 @@ impl ComputePipeline {
             &self.uniform,
             0,
             byte_slice(&[MandelbrotUniform {
-                iterations: iterations as u32,
+                iterations: iterations as i32,
                 zm,
                 ze,
             }]),
