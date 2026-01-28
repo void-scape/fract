@@ -9,6 +9,7 @@ struct MandelbrotUniform {
     zm: f32,
     ze: i32,
     batch_iter: i32,
+    palette_len: f32,
     color_scale: f32,
 }
 
@@ -176,7 +177,13 @@ impl ComputePipeline {
         }
     }
 
-    pub fn write_buffers(&self, queue: &wgpu::Queue, config: &Config, z: &Float) {
+    pub fn write_buffers(
+        &self,
+        queue: &wgpu::Queue,
+        config: &Config,
+        z: &Float,
+        palette: &Palette,
+    ) {
         let (zm, ze) = z.to_f32_exp();
         queue.write_buffer(
             &self.uniform,
@@ -186,6 +193,7 @@ impl ComputePipeline {
                 zm,
                 ze,
                 batch_iter: config.batch_iter as i32,
+                palette_len: palette.len as f32,
                 color_scale: config.color_scale,
             }]),
         );

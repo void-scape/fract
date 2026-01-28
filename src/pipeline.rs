@@ -181,6 +181,10 @@ impl Pipeline {
         result
     }
 
+    pub fn read_config<R>(&mut self, f: impl FnOnce(&Config) -> R) -> R {
+        f(&self.config)
+    }
+
     pub fn write_config<R>(&mut self, f: impl FnOnce(&mut Config) -> R) -> R {
         let result = f(&mut self.config);
         self.updated_position = true;
@@ -206,7 +210,7 @@ impl Pipeline {
                 .compute_reference_orbit(&self.x, &self.y, &self.z, iterations);
             self.orbit.write_buffers(&self.queue, &self.z);
             self.compute
-                .write_buffers(&self.queue, &self.config, &self.z);
+                .write_buffers(&self.queue, &self.config, &self.z, &self.palette);
         }
 
         let mut encoder = self
@@ -241,7 +245,7 @@ impl Pipeline {
                 .compute_reference_orbit(&self.x, &self.y, &self.z, self.config.iterations);
             self.orbit.write_buffers(&self.queue, &self.z);
             self.compute
-                .write_buffers(&self.queue, &self.config, &self.z);
+                .write_buffers(&self.queue, &self.config, &self.z, &self.palette);
         }
 
         let mut encoder = self

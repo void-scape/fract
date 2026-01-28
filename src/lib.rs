@@ -47,7 +47,7 @@ pub fn render_png(
     pipeline.log(frame)?;
     let pixels = pipeline.read_output_buffer_bytes();
     let (w, h) = pipeline.dimensions();
-    encoder::png(output, &pixels, w, h)
+    encoder::png(output, &pixels, w, h, true)
 }
 
 /// Render an mp4 to `output` with the given `pipeline`.

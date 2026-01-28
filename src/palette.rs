@@ -1,97 +1,10 @@
 use crate::byte_slice;
-use tint::{Color, LinearRgb, Sbgr};
-
-pub fn parse_palette(palette: &str) -> Vec<Sbgr> {
-    match palette {
-        "classic" => classic().to_vec(),
-        "lava" => lava().to_vec(),
-        "ocean" => ocean().to_vec(),
-        _ => {
-            println!("Unknown palette: {}", palette);
-            std::process::exit(1);
-        }
-    }
-}
-
-// https://stackoverflow.com/a/16505538
-pub fn classic() -> [Sbgr; 16] {
-    [
-        LinearRgb::from_rgb(66.0 / 255.0, 30.0 / 255.0, 15.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(25.0 / 255.0, 7.0 / 255.0, 26.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(9.0 / 255.0, 1.0 / 255.0, 47.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(4.0 / 255.0, 4.0 / 255.0, 73.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(0.0 / 255.0, 7.0 / 255.0, 100.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(12.0 / 255.0, 44.0 / 255.0, 138.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(24.0 / 255.0, 82.0 / 255.0, 177.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(57.0 / 255.0, 125.0 / 255.0, 209.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(134.0 / 255.0, 181.0 / 255.0, 229.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(211.0 / 255.0, 236.0 / 255.0, 248.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(241.0 / 255.0, 233.0 / 255.0, 191.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(248.0 / 255.0, 201.0 / 255.0, 95.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(1.0, 170.0 / 255.0, 0.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(204.0 / 255.0, 128.0 / 255.0, 0.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(153.0 / 255.0, 87.0 / 255.0, 0.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(106.0 / 255.0, 52.0 / 255.0, 3.0 / 255.0).to_sbgr(),
-    ]
-}
-
-// https://github.com/bertbaron/mandelbrot/blob/38b88b0bf5dcbe5cb214637964515197a56e124d/palette.js#L125
-pub fn lava() -> [Sbgr; 24] {
-    [
-        LinearRgb::from_rgb(0.0 / 255.0, 0.0 / 255.0, 0.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(10.0 / 255.0, 0.0 / 255.0, 0.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(20.0 / 255.0, 0.0 / 255.0, 0.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(40.0 / 255.0, 0.0 / 255.0, 0.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(80.0 / 255.0, 0.0 / 255.0, 0.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(160.0 / 255.0, 10.0 / 255.0, 0.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(200.0 / 255.0, 40.0 / 255.0, 0.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(240.0 / 255.0, 90.0 / 255.0, 0.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(1.0, 160.0 / 255.0, 0.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(1.0, 220.0 / 255.0, 10.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(1.0, 1.0, 80.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(1.0, 1.0, 160.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(1.0, 1.0, 1.0).to_sbgr(),
-        LinearRgb::from_rgb(1.0, 1.0, 160.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(1.0, 1.0, 80.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(1.0, 220.0 / 255.0, 10.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(1.0, 160.0 / 255.0, 0.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(240.0 / 255.0, 90.0 / 255.0, 0.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(200.0 / 255.0, 40.0 / 255.0, 0.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(160.0 / 255.0, 10.0 / 255.0, 0.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(80.0 / 255.0, 0.0 / 255.0, 0.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(40.0 / 255.0, 0.0 / 255.0, 0.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(20.0 / 255.0, 0.0 / 255.0, 0.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(10.0 / 255.0, 0.0 / 255.0, 0.0 / 255.0).to_sbgr(),
-    ]
-}
-
-// https://github.com/bertbaron/mandelbrot/blob/38b88b0bf5dcbe5cb214637964515197a56e124d/palette.js#L148
-pub fn ocean() -> [Sbgr; 18] {
-    [
-        LinearRgb::from_rgb(0.0 / 255.0, 0.0 / 255.0, 51.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(0.0 / 255.0, 0.0 / 255.0, 102.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(0.0 / 255.0, 0.0 / 255.0, 153.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(0.0 / 255.0, 51.0 / 255.0, 102.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(0.0 / 255.0, 102.0 / 255.0, 204.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(51.0 / 255.0, 153.0 / 255.0, 1.0).to_sbgr(),
-        LinearRgb::from_rgb(102.0 / 255.0, 178.0 / 255.0, 1.0).to_sbgr(),
-        LinearRgb::from_rgb(153.0 / 255.0, 204.0 / 255.0, 1.0).to_sbgr(),
-        LinearRgb::from_rgb(204.0 / 255.0, 229.0 / 255.0, 1.0).to_sbgr(),
-        LinearRgb::from_rgb(1.0, 1.0, 1.0).to_sbgr(),
-        LinearRgb::from_rgb(204.0 / 255.0, 229.0 / 255.0, 1.0).to_sbgr(),
-        LinearRgb::from_rgb(153.0 / 255.0, 204.0 / 255.0, 1.0).to_sbgr(),
-        LinearRgb::from_rgb(102.0 / 255.0, 178.0 / 255.0, 1.0).to_sbgr(),
-        LinearRgb::from_rgb(51.0 / 255.0, 153.0 / 255.0, 1.0).to_sbgr(),
-        LinearRgb::from_rgb(0.0 / 255.0, 102.0 / 255.0, 204.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(0.0 / 255.0, 51.0 / 255.0, 102.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(0.0 / 255.0, 0.0 / 255.0, 153.0 / 255.0).to_sbgr(),
-        LinearRgb::from_rgb(0.0 / 255.0, 0.0 / 255.0, 102.0 / 255.0).to_sbgr(),
-    ]
-}
+use tint::Sbgr;
 
 /// Stores a palette in a texture.
 pub struct Palette {
     pub bind_group: wgpu::BindGroup,
+    pub len: usize,
 }
 
 impl Palette {
@@ -153,7 +66,10 @@ impl Palette {
             ],
         });
 
-        Self { bind_group }
+        Self {
+            bind_group,
+            len: palette.len(),
+        }
     }
 
     pub fn bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
@@ -179,4 +95,77 @@ impl Palette {
             ],
         })
     }
+}
+
+/// Matches `palette` on [`colorgrad`] preset functions.
+pub fn parse_palette(palette: &str) -> Vec<Sbgr> {
+    macro_rules! match_colorgrad {
+        (palette, $($arm:ident,)*) => {
+            match palette {
+                $(stringify!($arm) => generate_gradient(&colorgrad::preset::$arm()),)*
+                _ => {
+                    println!("Unknown palette: {}", palette);
+                    std::process::exit(1);
+                }
+            }
+        };
+    }
+
+    match_colorgrad!(
+        palette,
+        blues,
+        br_bg,
+        bu_gn,
+        bu_pu,
+        cividis,
+        cool,
+        cubehelix_default,
+        gn_bu,
+        greens,
+        greys,
+        inferno,
+        magma,
+        or_rd,
+        oranges,
+        pi_yg,
+        plasma,
+        pr_gn,
+        pu_bu,
+        pu_bu_gn,
+        pu_or,
+        pu_rd,
+        purples,
+        rainbow,
+        rd_bu,
+        rd_gy,
+        rd_pu,
+        rd_yl_bu,
+        rd_yl_gn,
+        reds,
+        sinebow,
+        spectral,
+        turbo,
+        viridis,
+        warm,
+        yl_gn,
+        yl_gn_bu,
+        yl_or_br,
+        yl_or_rd,
+    )
+}
+
+fn generate_gradient(grad: &impl colorgrad::Gradient) -> Vec<Sbgr> {
+    let mut palette = Vec::new();
+    let samples = 16;
+    for x in 0..=samples {
+        let rgb = grad.at(x as f32 / samples as f32);
+        let [r, g, b, _] = rgb.to_rgba8();
+        palette.push(Sbgr::new(r, g, b, 255));
+    }
+    for x in (1..samples).rev() {
+        let rgb = grad.at(x as f32 / samples as f32);
+        let [r, g, b, _] = rgb.to_rgba8();
+        palette.push(Sbgr::new(r, g, b, 255));
+    }
+    palette
 }

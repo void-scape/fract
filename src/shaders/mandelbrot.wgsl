@@ -2,6 +2,7 @@ struct MandelbrotUniform {
     iterations: i32,
     zm: f32, ze: i32,
 	batch_iter: i32,
+    palette_len: f32,
 	color_scale: f32,
 }
 
@@ -56,12 +57,7 @@ fn mandelbrot(state_index: u32, delta: vec2<f32>) -> vec4<f32> {
 	var state = states[state_index];
 
 	if (state.finished == 1u) {
-        let x = points[state.k].x;
-        let y = points[state.k].y;
-        let S = exp2(f32(state.q));
-        let fx = x * exp2(f32(points[state.k].e)) + S * state.dx;
-        let fy = y * exp2(f32(points[state.k].e)) + S * state.dy;
-        return iteration_to_rgb(state.j, fx, fy);
+		return color(state);
     }
 
 	var dx = state.dx;
@@ -164,24 +160,39 @@ fn mandelbrot(state_index: u32, delta: vec2<f32>) -> vec4<f32> {
     state.q = q;
     states[state_index] = state;
 
-	x = points[k].x;
-	y = points[k].y;
-	let fx = x * exp2(f32(points[k].e)) + S * dx;
-	let fy = y * exp2(f32(points[k].e)) + S * dy;
- 	return iteration_to_rgb(j, fx, fy);
+	return color(state);
 }
 
-fn iteration_to_rgb(iteration: i32, x: f32, y: f32) -> vec4<f32> {
-    if (iteration == args.iterations) {
+fn color(state: OrbitState) -> vec4<f32> {
+    if (state.j == args.iterations) {
         return vec4(0.0, 0.0, 0.0, 1.0);
     }
 
+	let x = points[state.k].x;
+	let y = points[state.k].y;
+	let S = exp2(f32(state.q));
+	let fx = x * exp2(f32(points[state.k].e)) + S * state.dx;
+	let fy = y * exp2(f32(points[state.k].e)) + S * state.dy;
+ 	// return iteration_to_rgb(state.j, fx, fy);
+ 	return smooth_iteration_to_rgb(state.j, fx, fy);
+}
+
+fn iteration_to_rgb(iteration: i32, x: f32, y: f32) -> vec4<f32> {
+	let denom = args.palette_len * args.color_scale;
+	return sample(f32(iteration) / denom);
+}
+
+fn smooth_iteration_to_rgb(iteration: i32, x: f32, y: f32) -> vec4<f32> {
 	// https://en.wikipedia.org/wiki/Plotting_algorithms_for_the_Mandelbrot_set#Continuous_(smooth)_coloring
     let zn = dot(vec2(x, y), vec2(x, y));
     let nu = log2(log2(zn) * 0.5);
     let iter = f32(iteration) + 1.0 - nu;
+	let denom = args.palette_len * args.color_scale;
+	return sample(iter / denom);
+}
 
-	let uv = vec2(iter / args.color_scale, 0.5);
+fn sample(x: f32) -> vec4<f32> {
+	let uv = vec2(x, 0.5);
 	let rgb = textureSampleLevel(palette, palette_sampler, uv, 0.0).rgb;
     return vec4(select(rgb.bgr, rgb, SWAP_CHANNELS), 1.0);
 }

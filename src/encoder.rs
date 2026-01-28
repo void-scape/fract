@@ -26,7 +26,7 @@ impl Encoder {
     /// Save `frame_buffer` to a png in `data_dir`.
     pub fn render_frame(&mut self, frame_buffer: &[u8]) -> std::io::Result<()> {
         let output = format!("{}/frames/{}.png", self.data_dir, self.frame);
-        png(&output, frame_buffer, self.width, self.height)?;
+        png(&output, frame_buffer, self.width, self.height, true)?;
         self.frame += 1;
         Ok(())
     }
@@ -38,7 +38,13 @@ impl Encoder {
 }
 
 // Fast png encoding using the rust `png` crate.
-pub fn png(output: &str, frame: &[u8], width: usize, height: usize) -> std::io::Result<()> {
+pub fn png(
+    output: &str,
+    frame: &[u8],
+    width: usize,
+    height: usize,
+    flip_channels: bool,
+) -> std::io::Result<()> {
     let file = std::fs::File::create(output)?;
     let output = std::io::BufWriter::new(file);
     let mut encoder = png::Encoder::new(output, width as u32, height as u32);
@@ -46,13 +52,15 @@ pub fn png(output: &str, frame: &[u8], width: usize, height: usize) -> std::io::
     encoder.set_depth(png::BitDepth::Eight);
     let mut writer = encoder.write_header().unwrap();
 
-    // NOTE: This is about 1% of the rendering time, which is annoying but the
-    // viewer code needs the `frame_buffer` to be in `Sgbr` format...
-    let frame: Vec<u8> = frame
-        .chunks_exact(4)
-        .flat_map(|bgr| [bgr[2], bgr[1], bgr[0], bgr[3]])
-        .collect();
-    writer.write_image_data(&frame).unwrap();
+    if flip_channels {
+        let frame: Vec<u8> = frame
+            .chunks_exact(4)
+            .flat_map(|bgr| [bgr[2], bgr[1], bgr[0], bgr[3]])
+            .collect();
+        writer.write_image_data(&frame).unwrap();
+    } else {
+        writer.write_image_data(frame).unwrap();
+    }
 
     Ok(())
 }
