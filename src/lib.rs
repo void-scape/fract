@@ -1,6 +1,4 @@
 #![allow(clippy::too_many_arguments)]
-#![allow(internal_features)]
-#![feature(core_intrinsics)]
 
 use crate::{encoder::Encoder, pipeline::Pipeline};
 use indicatif::ProgressBar;
