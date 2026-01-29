@@ -52,12 +52,25 @@ impl Pipeline {
                 surface,
             )
         };
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: surface.as_ref(),
-            force_fallback_adapter: false,
-        }))
-        .expect("Failed to create adapter");
+        let mut adapter =
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: surface.as_ref(),
+                force_fallback_adapter: false,
+            }));
+
+        if adapter.is_err() {
+            println!(
+                "[ADAPTER] HighPerformance adapter not found. Attempting fallback/software adapter..."
+            );
+            adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::None,
+                compatible_surface: surface.as_ref(),
+                force_fallback_adapter: true,
+            }));
+        }
+
+        let adapter = adapter.unwrap();
         println!("[ADAPTER] {:?}", adapter.get_info());
 
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
