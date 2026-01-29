@@ -12,6 +12,9 @@ name = "render"
 [[bin]]
 name = "permute"
 
+[[bin]]
+name = "collage"
+
 [dependencies]
 tint = { path = "../blaze/crates/tint" }
 rug = { version = "1.28.1", default-features = false, features = [

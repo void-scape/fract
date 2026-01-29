@@ -163,32 +163,68 @@ fn mandelbrot(state_index: u32, delta: vec2<f32>) -> vec4<f32> {
 	return color(state);
 }
 
+override ITERATIONS: bool = false;
+override WAVE: bool = false;
+override SMOOTH_ITERATIONS: bool = false;
+override SMOOTH_WAVE: bool = false;
+
 fn color(state: OrbitState) -> vec4<f32> {
     if (state.j == args.iterations) {
         return vec4(0.0, 0.0, 0.0, 1.0);
     }
+
+	if ITERATIONS {
+		let denom = args.palette_len * args.color_scale;
+		return sample(f32(state.j) / denom);
+	}
+	if WAVE {
+		return wave(f32(state.j));
+	}
 
 	let x = points[state.k].x;
 	let y = points[state.k].y;
 	let S = exp2(f32(state.q));
 	let fx = x * exp2(f32(points[state.k].e)) + S * state.dx;
 	let fy = y * exp2(f32(points[state.k].e)) + S * state.dy;
- 	// return iteration_to_rgb(state.j, fx, fy);
- 	return smooth_iteration_to_rgb(state.j, fx, fy);
-}
 
-fn iteration_to_rgb(iteration: i32, x: f32, y: f32) -> vec4<f32> {
-	let denom = args.palette_len * args.color_scale;
-	return sample(f32(iteration) / denom);
-}
-
-fn smooth_iteration_to_rgb(iteration: i32, x: f32, y: f32) -> vec4<f32> {
 	// https://en.wikipedia.org/wiki/Plotting_algorithms_for_the_Mandelbrot_set#Continuous_(smooth)_coloring
-    let zn = dot(vec2(x, y), vec2(x, y));
+    let zn = dot(vec2(fx, fy), vec2(fx, fy));
     let nu = log2(log2(zn) * 0.5);
-    let iter = f32(iteration) + 1.0 - nu;
-	let denom = args.palette_len * args.color_scale;
-	return sample(iter / denom);
+    let iteration = f32(state.j) + 1.0 - nu;
+
+	if SMOOTH_ITERATIONS {
+		let denom = args.palette_len * args.color_scale;
+		return sample(iteration / denom);
+	}
+	if SMOOTH_WAVE {
+		return wave(iteration);
+	}
+
+	// this should never trigger, but if it does it will be obvious
+	return vec4(1.0, 0.0, 1.0, 1.0);
+}
+
+fn wave(iteration: f32) -> vec4<f32> {
+	let period = 64.0;
+	let mo = 0.0;
+
+	let rp = 1.0;
+	let gp = 1.0;
+	let bp = 1.0;
+
+	let ro = -0.47;
+	let go = 0.0;
+	let bo = 0.7;
+
+	let count = iteration;
+
+	let ang = count * 2.0 * 3.14159265 / period;
+	let r = 0.5 + 0.5 * sin(ang * rp + ro + mo);
+    let g = 0.5 + 0.5 * sin(ang * gp + go + mo);
+    let b = 0.5 + 0.5 * sin(ang * bp + bo + mo);
+
+	let rgb = vec3(r, g, b);
+    return vec4(select(rgb.bgr, rgb, SWAP_CHANNELS), 1.0);
 }
 
 fn sample(x: f32) -> vec4<f32> {

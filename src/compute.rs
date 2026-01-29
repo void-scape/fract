@@ -142,7 +142,23 @@ impl ComputePipeline {
             surface_format,
             wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
         );
-        let constants = [("SWAP_CHANNELS", if needs_swap { 1.0 } else { 0.0 })];
+
+        let index = match &*config.color_mode {
+            "iterations" => 0,
+            "wave" => 1,
+            "smooth_iterations" => 2,
+            "smooth_wave" => 3,
+            _ => 0,
+        };
+
+        let mut constants = [
+            ("ITERATIONS", 0.0),
+            ("WAVE", 0.0),
+            ("SMOOTH_ITERATIONS", 0.0),
+            ("SMOOTH_WAVE", 0.0),
+            ("SWAP_CHANNELS", if needs_swap { 1.0 } else { 0.0 }),
+        ];
+        constants[index].1 = 1.0;
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,

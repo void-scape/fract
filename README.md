@@ -6,6 +6,8 @@ Utilizes perturbation theory and floatexp hacks to dramatically increase zoom de
 - https://www.hgreer.com/JavascriptMandelbrot/
 - https://philthompson.me/2022/Perturbation-Theory-and-the-Mandelbrot-set.html
 
+Here is a nice dataset to get started with: https://www.lesh.cloud/mandelbrot/
+
 ## Quick Start
 
 Run the viewer:
@@ -16,6 +18,11 @@ $ cargo run --release --bin viewer [-c path/to/config.toml]
 Render an image:
 ```console
 $ cargo run --release --bin render -- path/to/output.png [-c path/to/config.toml]
+```
+
+Render a collage:
+```console
+$ cargo run --release --bin collage -- path/to/output.png -c path/to/configs
 ```
 
 Render a video:
@@ -41,25 +48,5 @@ height = 1600
 ssaa = true
 batch_iter = 1000
 color_scale = 250
-```
-
-## Permute
-
-![screenshot](./screenshots/permute.png)
-
-### permute.toml
-```toml
-palette = ["ocean", "lava"]
-iterations = [100_000]
-color_scale = [24.0, 150.0]
-```
-
-I generated a collage from the output images on macos with this script:
-```sh
-#!/bin/bash
-set -e
-cargo run --release --bin permute -- -c config.toml -p per.toml permutes \
-	| grep -oE "permutes/[0-9]+/frames" \
-	| xargs -I {} montage "{}"/*.png -tile x2 -geometry 400x400+0+0 $1
-open $1
+color_mode = "smooth_iterations"
 ```

@@ -10,14 +10,21 @@ pub struct Config {
     pub ssaa: bool,
     pub batch_iter: usize,
     pub color_scale: f32,
+    pub color_mode: String,
 }
 
 impl Config {
     pub fn log(&self) {
         let ssaa = if self.ssaa { "enabled" } else { "disabled" };
         println!(
-            "[CONFIG] {} iterations, palette={}, ssaa={}, batch_iter={}, color_scale={}",
-            self.iterations, self.palette, ssaa, self.batch_iter, self.color_scale,
+            "[CONFIG] {} iterations, method={}, palette={}, ssaa={}, \
+            batch_iter={}, color_scale={}",
+            self.iterations,
+            self.color_mode,
+            self.palette,
+            ssaa,
+            self.batch_iter,
+            self.color_scale,
         );
     }
 }
@@ -35,6 +42,7 @@ impl Default for Config {
             ssaa: false,
             batch_iter: 1000,
             color_scale: 24.0,
+            color_mode: "smooth_iterations".to_string(),
         }
     }
 }

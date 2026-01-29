@@ -188,6 +188,9 @@ impl Pipeline {
     pub fn write_config<R>(&mut self, f: impl FnOnce(&mut Config) -> R) -> R {
         let result = f(&mut self.config);
         self.updated_position = true;
+        self.z = float_from_str(&self.config.zoom);
+        self.x = float_from_str(&self.config.x);
+        self.y = float_from_str(&self.config.y);
         self.palette = Palette::new(
             &self.device,
             &self.queue,
