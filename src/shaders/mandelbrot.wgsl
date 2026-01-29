@@ -4,6 +4,7 @@ struct MandelbrotUniform {
 	batch_iter: i32,
     palette_len: f32,
 	color_scale: f32,
+	color_mode: i32,
 }
 
 struct OrbitUniform {
@@ -163,21 +164,16 @@ fn mandelbrot(state_index: u32, delta: vec2<f32>) -> vec4<f32> {
 	return color(state);
 }
 
-override ITERATIONS: bool = false;
-override WAVE: bool = false;
-override SMOOTH_ITERATIONS: bool = false;
-override SMOOTH_WAVE: bool = false;
-
 fn color(state: OrbitState) -> vec4<f32> {
     if (state.j == args.iterations) {
         return vec4(0.0, 0.0, 0.0, 1.0);
     }
 
-	if ITERATIONS {
+	if args.color_mode == 0 {
 		let denom = args.palette_len * args.color_scale;
 		return sample(f32(state.j) / denom);
 	}
-	if WAVE {
+	if args.color_mode == 1 {
 		return wave(f32(state.j));
 	}
 
@@ -192,11 +188,11 @@ fn color(state: OrbitState) -> vec4<f32> {
     let nu = log2(log2(zn) * 0.5);
     let iteration = f32(state.j) + 1.0 - nu;
 
-	if SMOOTH_ITERATIONS {
+	if args.color_mode == 2 {
 		let denom = args.palette_len * args.color_scale;
 		return sample(iteration / denom);
 	}
-	if SMOOTH_WAVE {
+	if args.color_mode == 3 {
 		return wave(iteration);
 	}
 
@@ -205,23 +201,38 @@ fn color(state: OrbitState) -> vec4<f32> {
 }
 
 fn wave(iteration: f32) -> vec4<f32> {
-	let period = 64.0;
+	var count = iteration;
+	let period = 64.0 * args.color_scale;
 	let mo = 0.0;
 
-	let rp = 1.0;
-	let gp = 1.0;
-	let bp = 1.0;
+	var rp = 1.0;
+	var gp = 1.0;
+	var bp = 1.0;
 
-	let ro = -0.47;
-	let go = 0.0;
-	let bo = 0.7;
+	let uv = vec2(count, 0.5);
+	let palette_rgb = textureSampleLevel(palette, palette_sampler, uv, 0.0).rgb;
 
-	let count = iteration;
+	// rp = rp + palette_rgb.r * args.color_scale;
+	// gp = gp + palette_rgb.g * args.color_scale;
+	// bp = bp + palette_rgb.b * args.color_scale;
 
-	let ang = count * 2.0 * 3.14159265 / period;
-	let r = 0.5 + 0.5 * sin(ang * rp + ro + mo);
-    let g = 0.5 + 0.5 * sin(ang * gp + go + mo);
-    let b = 0.5 + 0.5 * sin(ang * bp + bo + mo);
+	var ro = -0.47;
+	var go = 0.0;
+	var bo = 0.7;
+
+	let tau = 2.0 * 3.14159265;
+	// ro = (ro + palette_rgb.r) % tau;
+	// go = (go + palette_rgb.g) % tau;
+	// bo = (bo + palette_rgb.b) % tau;
+
+	let ang = count * tau / period;
+	var r = 0.5 + 0.5 * sin(ang * rp + ro + mo);
+    var g = 0.5 + 0.5 * sin(ang * gp + go + mo);
+    var b = 0.5 + 0.5 * sin(ang * bp + bo + mo);
+
+	// r = (r + palette_rgb.r) % 1.0;
+	// g = (g + palette_rgb.g) % 1.0;
+	// b = (b + palette_rgb.b) % 1.0;
 
 	let rgb = vec3(r, g, b);
     return vec4(select(rgb.bgr, rgb, SWAP_CHANNELS), 1.0);

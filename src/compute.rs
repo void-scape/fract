@@ -11,6 +11,7 @@ struct MandelbrotUniform {
     batch_iter: i32,
     palette_len: f32,
     color_scale: f32,
+    color_mode: i32,
 }
 
 /// Perform iterative mandelbrot computation in a compute shader.
@@ -142,23 +143,7 @@ impl ComputePipeline {
             surface_format,
             wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
         );
-
-        let index = match &*config.color_mode {
-            "iterations" => 0,
-            "wave" => 1,
-            "smooth_iterations" => 2,
-            "smooth_wave" => 3,
-            _ => 0,
-        };
-
-        let mut constants = [
-            ("ITERATIONS", 0.0),
-            ("WAVE", 0.0),
-            ("SMOOTH_ITERATIONS", 0.0),
-            ("SMOOTH_WAVE", 0.0),
-            ("SWAP_CHANNELS", if needs_swap { 1.0 } else { 0.0 }),
-        ];
-        constants[index].1 = 1.0;
+        let constants = [("SWAP_CHANNELS", if needs_swap { 1.0 } else { 0.0 })];
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
@@ -200,6 +185,14 @@ impl ComputePipeline {
         z: &Float,
         palette: &Palette,
     ) {
+        let color_mode = match &*config.color_mode {
+            "iterations" => 0,
+            "wave" => 1,
+            "smooth_iterations" => 2,
+            "smooth_wave" => 3,
+            _ => 0,
+        };
+
         let (zm, ze) = z.to_f32_exp();
         queue.write_buffer(
             &self.uniform,
@@ -211,6 +204,7 @@ impl ComputePipeline {
                 batch_iter: config.batch_iter as i32,
                 palette_len: palette.len as f32,
                 color_scale: config.color_scale,
+                color_mode,
             }]),
         );
         queue
