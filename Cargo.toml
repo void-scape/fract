@@ -33,7 +33,7 @@ env_logger = "0.11.8"
 pollster = "0.4.0"
 wgpu = "28.0.0"
 # just need the window but this reduces the features in winit lol
-glazer = { path = "../blaze/crates/glazer", default-features = false }
+glazer = { path = "blaze/crates/glazer", default-features = false }
 
 # palette
 colorgrad = { version = "0.8.0", features = ["preset"] }
