@@ -13,6 +13,8 @@ pub fn run(memory: Memory) -> ! {
 }
 
 pub struct Memory {
+    #[cfg(target_arch = "wasm32")]
+    pipeline_builder: Option<crate::pipeline::PipelineBuilder>,
     pipeline: Option<Pipeline>,
     config: Config,
     cursor_x: f64,
@@ -26,11 +28,20 @@ impl Memory {
             cursor_x: 0.0,
             cursor_y: 0.0,
             pipeline: None,
+            #[cfg(target_arch = "wasm32")]
+            pipeline_builder: None,
         }
     }
 }
 
-fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInput<Memory>) {
+fn handle_input(
+    glazer::PlatformInput {
+        window,
+        memory,
+        input,
+        ..
+    }: glazer::PlatformInput<Memory>,
+) {
     match input {
         glazer::Input::Window(WindowEvent::KeyboardInput {
             event:
@@ -57,6 +68,9 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
         glazer::Input::Window(WindowEvent::CursorMoved { position, .. }) => {
             memory.cursor_x = position.x;
             memory.cursor_y = position.y;
+            // let scale = window.scale_factor();
+            // memory.cursor_y /= scale;
+            // memory.cursor_x /= scale;
         }
         glazer::Input::Window(WindowEvent::MouseInput {
             state: ElementState::Pressed,
@@ -66,6 +80,10 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
             let Some(pipeline) = memory.pipeline.as_mut() else {
                 return;
             };
+
+            let physical_size = window.inner_size();
+            let w = Float::from(physical_size.width);
+            let h = Float::from(physical_size.height);
 
             pipeline.write_position(|x, y, z| {
                 let factor = match button {
@@ -81,8 +99,6 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
 
                 let cx = Float::from(memory.cursor_x);
                 let cy = Float::from(memory.cursor_y);
-                let w = Float::from(memory.config.width);
-                let h = Float::from(memory.config.height);
                 let one = Float::ONE;
                 let two = Float::TWO;
 
@@ -117,10 +133,38 @@ fn update_and_render(
     window.set_resizable(false);
     window.set_title("Mandelbrot Set");
 
-    let pipeline = memory
+    #[cfg(target_arch = "wasm32")]
+    {
+        if memory.pipeline.is_none() {
+            let builder = memory.pipeline_builder.get_or_insert_with(|| {
+                crate::pipeline::PipelineBuilder::new(window, memory.config.clone())
+            });
+            if builder.poll() {
+                memory.pipeline = Some(memory.pipeline_builder.take().unwrap().build());
+                reparent_canvas("fract");
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    memory
         .pipeline
         .get_or_insert_with(|| Pipeline::new(Some(window), memory.config.clone(), None));
 
-    pipeline.step_mandelbrot(memory.config.iterations);
-    pipeline.present();
+    if let Some(pipeline) = &mut memory.pipeline {
+        pipeline.force_step_mandelbrot(memory.config.iterations);
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn reparent_canvas(container_id: &str) {
+    use wasm_bindgen::JsCast;
+    let window = web_sys::window().unwrap();
+    let document = window.document().unwrap();
+    let canvas = document.query_selector("canvas").unwrap().unwrap();
+    let container = document.get_element_by_id(container_id).unwrap();
+    container.append_child(&canvas).unwrap();
+    let html_canvas = canvas.dyn_into::<web_sys::HtmlCanvasElement>().unwrap();
+    html_canvas.style().set_property("width", "100%").unwrap();
+    html_canvas.style().set_property("height", "100%").unwrap();
 }

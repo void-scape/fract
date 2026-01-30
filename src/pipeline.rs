@@ -8,6 +8,73 @@ use crate::{
 };
 use glazer::winit::window::Window;
 use malachite_float::Float;
+#[cfg(target_arch = "wasm32")]
+use std::{cell::RefCell, rc::Rc};
+
+#[cfg(target_arch = "wasm32")]
+pub struct PipelineBuilder {
+    pipeline: Rc<RefCell<Option<Pipeline>>>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl PipelineBuilder {
+    pub fn new(window: &Window, config: Config) -> Self {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let surface = instance
+            .create_surface(window)
+            .expect("Failed to create surface");
+        // SAFETY: `glazer` must pass the window to the `update_and_render` callback,
+        // therefore it will be a valid reference whenever this surface is used.
+        let surface =
+            unsafe { std::mem::transmute::<wgpu::Surface<'_>, wgpu::Surface<'static>>(surface) };
+
+        let pipeline = Rc::new(RefCell::new(None));
+        wasm_bindgen_futures::spawn_local({
+            let pipeline = pipeline.clone();
+            async move {
+                let adapter = instance
+                    .request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: wgpu::PowerPreference::HighPerformance,
+                        compatible_surface: Some(&surface),
+                        force_fallback_adapter: false,
+                    })
+                    .await
+                    .unwrap();
+
+                let (device, queue) = adapter
+                    .request_device(&wgpu::DeviceDescriptor {
+                        label: None,
+                        required_features: wgpu::Features::FLOAT32_FILTERABLE,
+                        required_limits: adapter.limits(),
+                        experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                        memory_hints: wgpu::MemoryHints::MemoryUsage,
+                        trace: wgpu::Trace::Off,
+                    })
+                    .await
+                    .expect("Failed to create device");
+
+                _ = pipeline.borrow_mut().insert(Pipeline::from_components(
+                    adapter,
+                    device,
+                    queue,
+                    Some(surface),
+                    config,
+                    None,
+                ));
+            }
+        });
+
+        Self { pipeline }
+    }
+
+    pub fn poll(&self) -> bool {
+        self.pipeline.borrow().is_some()
+    }
+
+    pub fn build(self) -> Pipeline {
+        self.pipeline.borrow_mut().take().unwrap()
+    }
+}
 
 pub struct Pipeline {
     surface: Option<wgpu::Surface<'static>>,
@@ -47,7 +114,7 @@ impl Pipeline {
         });
         // SAFETY: `glazer` must pass the window to the `update_and_render` callback,
         // therefore it will be a valid reference whenever this surface is used.
-        let mut surface = unsafe {
+        let surface = unsafe {
             std::mem::transmute::<Option<wgpu::Surface<'_>>, Option<wgpu::Surface<'static>>>(
                 surface,
             )
@@ -83,6 +150,17 @@ impl Pipeline {
         }))
         .expect("Failed to create device");
 
+        Self::from_components(adapter, device, queue, surface, config, log)
+    }
+
+    fn from_components(
+        adapter: wgpu::Adapter,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        mut surface: Option<wgpu::Surface<'static>>,
+        config: Config,
+        log: Option<Box<dyn std::io::Write>>,
+    ) -> Self {
         let surface_format = if let Some(surface) = surface.as_mut() {
             let surface_caps = surface.get_capabilities(&adapter);
             let surface_format = surface_caps
@@ -112,6 +190,7 @@ impl Pipeline {
         let ssaa = SsaaPipeline::new(
             &device,
             surface_format,
+            surface.is_some(),
             config.width,
             config.height,
             config.ssaa,
@@ -217,7 +296,24 @@ impl Pipeline {
     ///
     /// Returns the remaining pixels to render.
     pub fn step_mandelbrot(&mut self, iterations: usize) -> u32 {
+        let surface_texture = self
+            .surface
+            .as_ref()
+            .map(|surface| surface.get_current_texture().unwrap());
+
         if self.finished() {
+            if let Some(surface) = surface_texture {
+                let mut encoder = self
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+                self.ssaa.render_pass(
+                    &mut encoder,
+                    Some(surface.texture.create_view(&Default::default())),
+                );
+                self.queue.submit([encoder.finish()]);
+                surface.present();
+            }
+
             return 0;
         }
 
@@ -242,12 +338,62 @@ impl Pipeline {
             self.config.width,
             self.config.height,
         );
-        self.ssaa.render_pass(&mut encoder);
+        self.ssaa.render_pass(
+            &mut encoder,
+            surface_texture
+                .as_ref()
+                .map(|surface_texture| surface_texture.texture.create_view(&Default::default())),
+        );
         let remaining = self
             .compute
             .remaining_pixels(&self.device, &self.queue, encoder);
         self.finished_render = remaining == 0;
+        if let Some(surface) = surface_texture {
+            surface.present();
+        }
         remaining
+    }
+
+    /// Renders pixels with an iteration limit.
+    ///
+    /// Continues to draw whether or not pixels are remaining.
+    pub fn force_step_mandelbrot(&mut self, iterations: usize) {
+        if self.updated_position {
+            self.updated_position = false;
+            self.orbit
+                .compute_reference_orbit(&self.x, &self.y, &self.z, iterations);
+            self.orbit.write_buffers(&self.queue, &self.z);
+            self.compute
+                .write_buffers(&self.queue, &self.config, &self.z, &self.palette);
+        }
+
+        let surface_texture = self
+            .surface
+            .as_ref()
+            .map(|surface| surface.get_current_texture().unwrap());
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        self.compute.compute_mandelbrot(
+            &self.queue,
+            &mut encoder,
+            &self.orbit,
+            &self.palette,
+            &self.ssaa,
+            self.config.width,
+            self.config.height,
+        );
+        self.ssaa.render_pass(
+            &mut encoder,
+            surface_texture
+                .as_ref()
+                .map(|surface_texture| surface_texture.texture.create_view(&Default::default())),
+        );
+        self.queue.submit([encoder.finish()]);
+        if let Some(surface) = surface_texture {
+            surface.present();
+        }
     }
 
     /// [`Pipeline::step_mandelbrot`] without rendering into the offscreen buffer.
@@ -289,41 +435,17 @@ impl Pipeline {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-        self.ssaa.render_pass(&mut encoder);
-        self.queue.submit([encoder.finish()]);
-    }
-
-    /// Copy the output buffer into the surface, if one exists.
-    pub fn present(&self) {
-        let Some(surface) = &self.surface else {
-            return;
-        };
-
-        let surface_texture = surface.get_current_texture().unwrap();
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-        encoder.copy_texture_to_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: self.ssaa.output_texture(),
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyTextureInfo {
-                texture: &surface_texture.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::Extent3d {
-                width: self.config.width as u32,
-                height: self.config.height as u32,
-                depth_or_array_layers: 1,
-            },
+        self.ssaa.render_pass(
+            &mut encoder,
+            self.surface.as_ref().map(|surface| {
+                surface
+                    .get_current_texture()
+                    .unwrap()
+                    .texture
+                    .create_view(&Default::default())
+            }),
         );
         self.queue.submit([encoder.finish()]);
-        surface_texture.present();
     }
 
     /// [`Pipeline`] has rendered all of the pixels for the current position.
@@ -342,7 +464,7 @@ impl Pipeline {
 
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
-                texture: self.ssaa.output_texture(),
+                texture: self.ssaa.output_texture().unwrap(),
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,

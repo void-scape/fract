@@ -8,8 +8,7 @@ pub struct SsaaPipeline {
     pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
     src_view: wgpu::TextureView,
-    dst: wgpu::Texture,
-    dst_view: wgpu::TextureView,
+    dst: Option<(wgpu::Texture, wgpu::TextureView)>,
     enabled: bool,
 }
 
@@ -17,26 +16,32 @@ impl SsaaPipeline {
     pub fn new(
         device: &wgpu::Device,
         format: wgpu::TextureFormat,
+        render_to_surface: bool,
         width: usize,
         height: usize,
         enabled: bool,
     ) -> Self {
-        let dst_desc = wgpu::TextureDescriptor {
-            size: wgpu::Extent3d {
-                width: width as u32,
-                height: height as u32,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-            label: None,
-            view_formats: &[],
+        let dst = if render_to_surface {
+            None
+        } else {
+            let dst_desc = wgpu::TextureDescriptor {
+                size: wgpu::Extent3d {
+                    width: width as u32,
+                    height: height as u32,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                label: None,
+                view_formats: &[],
+            };
+            let dst = device.create_texture(&dst_desc);
+            let dst_view = dst.create_view(&Default::default());
+            Some((dst, dst_view))
         };
-        let dst = device.create_texture(&dst_desc);
-        let dst_view = dst.create_view(&Default::default());
 
         let ssaa_samples = if enabled { SSAA_SAMPLES } else { 1 };
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -106,6 +111,7 @@ impl SsaaPipeline {
         });
 
         let shader = device.create_shader_module(wgpu::include_wgsl!("shaders/ssaa.wgsl"));
+        let constants = [("GAMMA_CORRECT", (!format.is_srgb()) as u8 as f64)];
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: None,
             layout: Some(&pipeline_layout),
@@ -119,7 +125,10 @@ impl SsaaPipeline {
                 module: &shader,
                 entry_point: Some("fs_main"),
                 targets: &[Some(format.into())],
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &constants,
+                    zero_initialize_workgroup_memory: false,
+                },
             }),
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: None,
@@ -133,7 +142,6 @@ impl SsaaPipeline {
             bind_group,
             src_view,
             dst,
-            dst_view,
             enabled,
         }
     }
@@ -152,18 +160,25 @@ impl SsaaPipeline {
     }
 
     /// Texture that contains the final mandelbrot render.
-    pub fn output_texture(&self) -> &wgpu::Texture {
-        &self.dst
+    pub fn output_texture(&self) -> Option<&wgpu::Texture> {
+        self.dst.as_ref().map(|(dst, _)| dst)
     }
 
     /// Perform super-sampling on the mandelbrot texture contained in [`Self::render_target`].
     ///
     /// If SSAA is disabled, this function does nothing.
-    pub fn render_pass(&self, encoder: &mut wgpu::CommandEncoder) {
+    pub fn render_pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        render_target: Option<wgpu::TextureView>,
+    ) {
+        let view = render_target
+            .as_ref()
+            .unwrap_or_else(|| &self.dst.as_ref().unwrap().1);
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: None,
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &self.dst_view,
+                view,
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),

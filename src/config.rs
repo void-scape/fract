@@ -37,12 +37,12 @@ impl Default for Config {
             y: "0.0".to_string(),
             zoom: "2.0".to_string(),
             iterations: 10_000,
-            width: 800,
-            height: 800,
+            width: 600,
+            height: 600,
             palette: "magma".to_string(),
             ssaa: false,
             batch_iter: 1000,
-            color_scale: 1.0,
+            color_scale: 2.0,
             color_mode: "iterations".to_string(),
         }
     }

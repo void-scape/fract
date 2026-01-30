@@ -126,3 +126,20 @@ pub fn float_from_str(str: &str) -> Float {
     )
     .0
 }
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start_viewer() {
+    let window = web_sys::window().unwrap();
+    let search_query = window.location().search().unwrap();
+    let params = web_sys::UrlSearchParams::new_with_str(&search_query).unwrap();
+    let mut config = if let Some(toml) = params.get("config") {
+        toml::from_str::<config::Config>(&toml).unwrap()
+    } else {
+        config::Config::default()
+    };
+    config.width = 600;
+    config.height = 600;
+    let memory = viewer::Memory::from_config(config);
+    viewer::run(memory);
+}
