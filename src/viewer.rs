@@ -3,11 +3,8 @@ use glazer::winit::{
     event::{DeviceEvent, ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
     keyboard::{KeyCode, PhysicalKey},
 };
-use rug::{
-    Float,
-    float::Round,
-    ops::{AddAssignRound, MulAssignRound, SubAssignRound},
-};
+use malachite::base::num::basic::traits::{NegativeOne, One, OneHalf, Two};
+use malachite_float::Float;
 
 pub fn run(memory: Memory) -> ! {
     let width = memory.config.width;
@@ -45,17 +42,6 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
                 },
             ..
         }) => match key {
-            KeyCode::Escape => {
-                if let Some(pipeline) = memory.pipeline.as_mut() {
-                    pipeline.read_position(|x, y, z| {
-                        println!("x = \"{x}\"");
-                        println!("y = \"{y}\"");
-                        println!("zoom = \"{z}\"");
-                        println!("iterations = {}\n", memory.config.iterations);
-                    });
-                }
-                std::process::exit(0);
-            }
             KeyCode::KeyP => {
                 if let Some(pipeline) = memory.pipeline.as_mut() {
                     pipeline.read_position(|x, y, z| {
@@ -82,48 +68,30 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
             };
 
             pipeline.write_position(|x, y, z| {
-                let prec = z.prec().max(x.prec()).max(y.prec()) + 10;
-
                 let factor = match button {
-                    MouseButton::Left => 0.5,
-                    MouseButton::Right => 2.0,
+                    MouseButton::Left => Float::ONE_HALF,
+                    MouseButton::Right => Float::TWO,
+                    _ => return,
+                };
+                let zs = match button {
+                    MouseButton::Left => Float::ONE,
+                    MouseButton::Right => Float::NEGATIVE_ONE,
                     _ => return,
                 };
 
-                let zs = Float::with_val(
-                    prec,
-                    match button {
-                        MouseButton::Left => 1.0,
-                        MouseButton::Right => -1.0,
-                        _ => return,
-                    },
-                );
+                let cx = Float::from(memory.cursor_x);
+                let cy = Float::from(memory.cursor_y);
+                let w = Float::from(memory.config.width);
+                let h = Float::from(memory.config.height);
+                let one = Float::ONE;
+                let two = Float::TWO;
 
-                let cx = Float::with_val(prec, memory.cursor_x);
-                let cy = Float::with_val(prec, memory.cursor_y);
-                let one = Float::with_val(prec, 1.0);
-                let two = Float::with_val(prec, 2.0);
+                let dx = (&cx / &w * &two - &one) * w / &h * &zs;
+                let dy = (&cy / &h * &two - &one) * zs * Float::NEGATIVE_ONE;
 
-                let w = memory.config.width as f64;
-                let h = memory.config.height as f64;
-
-                let mut dx = Float::with_val(prec, &cx / w);
-                dx.mul_assign_round(&two, Round::Nearest);
-                dx.sub_assign_round(&one, Round::Nearest);
-                dx.mul_assign_round(w / h, Round::Nearest);
-                dx.mul_assign_round(&zs, Round::Nearest);
-
-                let mut dy = Float::with_val(prec, &cy / h);
-                dy.mul_assign_round(&two, Round::Nearest);
-                dy.sub_assign_round(&one, Round::Nearest);
-                dy.mul_assign_round(&zs, Round::Nearest);
-                dy.mul_assign_round(-1.0, Round::Nearest);
-
-                let dcx = Float::with_val(prec, &*z * &dx);
-                let dcy = Float::with_val(prec, &*z * &dy);
-                x.add_assign_round(dcx, Round::Nearest);
-                y.add_assign_round(dcy, Round::Nearest);
-                z.mul_assign_round(factor, Round::Nearest);
+                *x += &*z * &dx;
+                *y += &*z * &dy;
+                *z *= factor;
             });
         }
         glazer::Input::Device(DeviceEvent::MouseWheel { delta }) => match delta {
@@ -134,7 +102,7 @@ fn handle_input(glazer::PlatformInput { memory, input, .. }: glazer::PlatformInp
 
                 pipeline.write_position(|_, _, z| {
                     let sensitivity = 0.005;
-                    z.mul_assign_round((-delta.y * sensitivity).exp(), Round::Nearest);
+                    *z *= Float::from((-delta.y * sensitivity).exp());
                 });
             }
             _ => unimplemented!(),

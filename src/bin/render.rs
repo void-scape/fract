@@ -1,7 +1,7 @@
 use clap::Parser;
 use fract::pipeline::Pipeline;
 use indicatif::{ProgressBar, ProgressStyle};
-use rug::{Float, ops::AddAssignRound};
+use malachite_float::Float;
 use std::{process::ExitCode, time::UNIX_EPOCH};
 
 /// Mandelbrot set renderer.
@@ -108,9 +108,8 @@ fn main() -> std::io::Result<ExitCode> {
             encoder,
             args.frames,
             |z| {
-                let zoom_factor = Float::with_val(z.prec(), args.zoom);
-                let zoom_delta = Float::with_val(z.prec(), &*z * &zoom_factor);
-                z.add_assign_round(zoom_delta, rug::float::Round::Nearest);
+                let zoom_factor = Float::from(args.zoom);
+                *z += &*z * zoom_factor;
             },
             &args.output,
         )?;

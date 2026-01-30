@@ -1,5 +1,7 @@
-use crate::{byte_slice, config::Config, orbit::Orbit, palette::Palette, ssaa::SsaaPipeline};
-use rug::Float;
+use crate::{
+    byte_slice, config::Config, orbit::Orbit, palette::Palette, ssaa::SsaaPipeline, to_f32_exp,
+};
+use malachite_float::Float;
 use std::num::NonZeroU64;
 
 #[repr(C)]
@@ -193,7 +195,7 @@ impl ComputePipeline {
             _ => 0,
         };
 
-        let (zm, ze) = z.to_f32_exp();
+        let (zm, ze) = to_f32_exp(z);
         queue.write_buffer(
             &self.uniform,
             0,

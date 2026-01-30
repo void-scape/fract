@@ -1,4 +1,5 @@
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
 pub struct Config {
     pub x: String,
     pub y: String,
@@ -36,13 +37,13 @@ impl Default for Config {
             y: "0.0".to_string(),
             zoom: "2.0".to_string(),
             iterations: 10_000,
-            width: 1600,
-            height: 1600,
-            palette: "classic".to_string(),
+            width: 800,
+            height: 800,
+            palette: "magma".to_string(),
             ssaa: false,
             batch_iter: 1000,
-            color_scale: 24.0,
-            color_mode: "smooth_iterations".to_string(),
+            color_scale: 1.0,
+            color_mode: "iterations".to_string(),
         }
     }
 }

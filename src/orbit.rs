@@ -1,5 +1,6 @@
-use crate::byte_slice;
-use rug::{Assign, Float, float::Round, ops::AddAssignRound};
+use crate::{byte_slice, to_f32_exp};
+use malachite::base::{num::basic::traits::Zero, rounding_modes::RoundingMode};
+use malachite_float::Float;
 
 #[repr(C)]
 struct OrbitUniform {
@@ -121,12 +122,13 @@ impl Orbit {
         self.points.clear();
         self.polylim = 0;
 
-        let prec = z.prec() + 10;
-        let mut x = Float::with_val(prec, 0.0);
-        let mut y = Float::with_val(prec, 0.0);
-        let mut txx = Float::with_val(prec, 0.0);
-        let mut txy = Float::with_val(prec, 0.0);
-        let mut tyy = Float::with_val(prec, 0.0);
+        let prec = z.get_prec().unwrap_or(53) + 10;
+        let mut x = Float::ZERO;
+        x.set_prec(prec);
+        let mut y = x.clone();
+        let mut txx = x.clone();
+        let mut txy = x.clone();
+        let mut tyy = x.clone();
 
         let mut bx = WFloat::ZERO;
         let mut by = WFloat::ZERO;
@@ -137,20 +139,16 @@ impl Orbit {
 
         let mut not_failed = true;
         for i in 0..iterations {
-            // check if x and y are both representable as 32 bit floats
-            let x_exponent = x.get_exp().unwrap_or(0);
-            let y_exponent = y.get_exp().unwrap_or(0);
+            let (xm, xe) = to_f32_exp(&x);
+            let (ym, ye) = to_f32_exp(&y);
 
-            let mut scale_exponent = x_exponent.max(y_exponent);
+            let mut scale_exponent = xe.max(ye);
             if scale_exponent < -10000 {
                 scale_exponent = 0;
             }
 
-            let (xm, _) = x.to_f32_exp();
-            let (ym, _) = y.to_f32_exp();
-
-            let fx = xm / 2f32.powi(scale_exponent - x_exponent);
-            let fy = ym / 2f32.powi(scale_exponent - y_exponent);
+            let fx = xm / 2f32.powi(scale_exponent - xe);
+            let fy = ym / 2f32.powi(scale_exponent - ye);
 
             self.points.push(RefPoint {
                 x: fx,
@@ -167,14 +165,26 @@ impl Orbit {
                 e: scale_exponent,
             };
 
-            txx.assign(&x * &x);
-            txy.assign(&x * &y);
-            tyy.assign(&y * &y);
+            let rm = RoundingMode::Nearest;
 
-            x.assign(&txx - &tyy);
-            x.add_assign_round(x0, Round::Nearest);
-            y.assign(&txy + &txy);
-            y.add_assign_round(y0, Round::Nearest);
+            txx = x.clone();
+            txx.mul_prec_round_assign_ref(&x, prec, rm);
+            // txx = &x * &x;
+            txy = x.clone();
+            txy.mul_prec_round_assign_ref(&y, prec, rm);
+            // txy = &x * &y;
+            tyy = y.clone();
+            tyy.mul_prec_round_assign_ref(&y, prec, rm);
+            // tyy = &y * &y;
+
+            x = txx.clone();
+            x.sub_prec_round_assign_ref(&tyy, prec, rm);
+            x.add_prec_round_assign_ref(x0, prec, rm);
+            // x = &txx - &tyy + x0;
+            y = txy.clone();
+            y.add_prec_round_assign_ref(&txy, prec, rm);
+            y.add_prec_round_assign_ref(y0, prec, rm);
+            // y = &txy + &txy + y0;
 
             let one = WFloat { m: 1.0, e: 0 };
             let two = WFloat { m: 2.0, e: 0 };
@@ -198,10 +208,10 @@ impl Orbit {
                 add(add(add(mul(fx, dy), mul(fy, dx)), mul(cx, by)), mul(cy, bx)),
             );
 
-            let (xm, xe) = x.to_f32_exp();
+            let (xm, xe) = to_f32_exp(&x);
             let fx = WFloat { m: xm, e: xe };
 
-            let (ym, ye) = y.to_f32_exp();
+            let (ym, ye) = to_f32_exp(&y);
             let fy = WFloat { m: ym, e: ye };
 
             if i == 0
@@ -210,7 +220,7 @@ impl Orbit {
                     mul(
                         WFloat {
                             m: 1000.0,
-                            e: z.get_exp().unwrap_or(0) + 25,
+                            e: z.get_exponent().unwrap_or(0) + 1000000000,
                         },
                         maxabs(tdx, tdy),
                     ),
@@ -240,7 +250,7 @@ impl Orbit {
     ///
     /// Call [`Orbit::compute_reference_orbit`] first.
     pub fn write_buffers(&self, queue: &wgpu::Queue, z: &Float) {
-        let (r, rexp) = z.to_f32_exp();
+        let (r, rexp) = to_f32_exp(z);
         let r = WFloat { m: r, e: rexp };
 
         let poly_scape_exp = mul(

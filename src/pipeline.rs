@@ -7,7 +7,7 @@ use crate::{
     ssaa::SsaaPipeline,
 };
 use glazer::winit::window::Window;
-use rug::Float;
+use malachite_float::Float;
 
 pub struct Pipeline {
     surface: Option<wgpu::Surface<'static>>,
@@ -177,17 +177,18 @@ impl Pipeline {
         self.updated_position = true;
         let result = f(&mut self.x, &mut self.y, &mut self.z);
 
-        let xexp = self.x.get_exp().unwrap_or(0).unsigned_abs();
-        let yexp = self.y.get_exp().unwrap_or(0).unsigned_abs();
-        let required = 64 + self.z.get_exp().unwrap_or(0).unsigned_abs() + xexp.max(yexp);
+        let xexp = self.x.get_exponent().unwrap_or(0).unsigned_abs();
+        let yexp = self.y.get_exponent().unwrap_or(0).unsigned_abs();
+        let zexp = self.z.get_exponent().unwrap_or(0).unsigned_abs();
+        let required = (64 + zexp + xexp.max(yexp)) as u64;
 
-        if self.x.prec() < required {
+        if self.x.get_prec().is_some_and(|p| p < required) {
             self.x.set_prec(required);
         }
-        if self.y.prec() < required {
+        if self.y.get_prec().is_some_and(|p| p < required) {
             self.y.set_prec(required);
         }
-        if self.z.prec() < required {
+        if self.z.get_prec().is_some_and(|p| p < required) {
             self.z.set_prec(required);
         }
 

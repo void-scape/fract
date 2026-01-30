@@ -2,7 +2,8 @@
 
 use crate::{encoder::Encoder, pipeline::Pipeline};
 use indicatif::ProgressBar;
-use rug::{Float, ops::CompleteRound};
+use malachite::{Rational, base::rounding_modes::RoundingMode};
+use malachite_float::Float;
 
 mod compute;
 pub mod config;
@@ -88,24 +89,40 @@ pub fn render_mp4(
     encoder.finish(output)
 }
 
-/// Parses `f` and estimates the required precision.
-pub fn float_from_str(f: &str) -> Float {
-    let mut digits = f
+/// Cast a slice to bytes.
+pub fn byte_slice<T>(slice: &[T]) -> &[u8] {
+    unsafe { std::slice::from_raw_parts(slice.as_ptr().cast(), std::mem::size_of_val(slice)) }
+}
+
+pub fn to_f32_exp(x: &Float) -> (f32, i32) {
+    if let Some((m, e, _)) = x.sci_mantissa_and_exponent_round::<f32>(RoundingMode::Nearest) {
+        let signum = if x.is_sign_positive() { 1.0 } else { -1.0 };
+        // NOTE: Convert [1.0, 2.0) normalization to [0.5, 1.0) to work with the
+        // current `rug` implementation.
+        (m * 0.5 * signum, e + 1)
+    } else {
+        (0.0, 0)
+    }
+}
+
+pub fn float_from_str(str: &str) -> Float {
+    let mut digits = str
         .chars()
         .take_while(|c| *c != 'e')
         .filter(|c| c.is_ascii_digit())
         .count() as u32;
 
-    if let Some(index) = f.find("e") {
-        digits += str::parse::<i32>(&f[index + 1..]).unwrap().unsigned_abs();
+    if let Some(index) = str.find("e") {
+        digits += str::parse::<i32>(&str[index + 1..]).unwrap().unsigned_abs();
     }
 
-    let prec = (digits as f64 * 3.322).ceil() as u32 + 16;
+    let prec = (digits as f64 * 3.322).ceil() as u64 + 16;
     let prec = prec.max(53);
-    Float::parse(f).unwrap().complete(prec)
-}
 
-/// Cast a slice to bytes.
-pub fn byte_slice<T>(slice: &[T]) -> &[u8] {
-    unsafe { std::slice::from_raw_parts(slice.as_ptr().cast(), std::mem::size_of_val(slice)) }
+    Float::from_rational_prec_round(
+        Rational::from_sci_string_simplest(str).unwrap(),
+        prec,
+        RoundingMode::Nearest,
+    )
+    .0
 }
